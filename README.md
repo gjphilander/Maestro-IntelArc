@@ -3,6 +3,7 @@
 A one-click local AI **creative studio, director, and video editor** for creators. Maestro combines a modern interface with powerful image, video, and audio generation, an LLM-directed production workflow, and a non-destructive multi-track editor. Supports NVIDIA CUDA GPUs and experimental **Intel Arc XPU GPUs**, including the Arc Pro B70. Optimized for LTX-2.5, MiniMax H3, and the latest local creative models and LoRAs.
 
 To install this branch in Pinokio, go to the "pinokio\api" folder, open the command prompt, and run the command:
+
 git clone -b intel-arc-xpu --single-branch https://github.com/gjphilander/Maestro-IntelArc
 
 After successfull install with pinokio, **Maestro** can be run directly in the browser by going to "pinokio\api\Maestro.git" and double clicking **start-maestro.bat**., or you can still run it from within Pinokio.
