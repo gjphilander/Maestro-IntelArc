@@ -1,9 +1,11 @@
 const {
+  isIntelXpu,
   runtimeProfile,
 } = require("./scripts/pinokio/launcher_profile")
 
 module.exports = async (kernel) => {
   const runtime = runtimeProfile(kernel)
+  const intelXpu = isIntelXpu(kernel)
   const samReadyMarker = "app/services/sam/env/.maestro-sam-ready"
   const alreadyCurrentAndReady =
     `{{/already up[- ]to[- ]date/i.test(input.stdout) && exists('${runtime.marker}') && exists('${runtime.flashMarker}') && exists('ui/dist/index.html') && exists('ui/dist/assets') && (!exists('app/services/sam/env') || exists('${samReadyMarker}')) ? 'uptodate' : 'build'}}`
@@ -87,7 +89,26 @@ module.exports = async (kernel) => {
       path: "app",
       message: "uv pip install -r requirements.txt"
     }
-  }, {
+  }, ...(intelXpu ? [{
+    // XPU: Requirements can reintroduce optional NVIDIA packages. Restore the
+    // CPU ONNX Runtime fallback before optional-runtime reconciliation.
+    method: "shell.run",
+    params: {
+      venv: runtime.env,
+      venv_python: runtime.python,
+      path: "app",
+      env: {
+        MAESTRO_DEVICE: "xpu",
+        ONEAPI_DEVICE_SELECTOR: "{{envs.ONEAPI_DEVICE_SELECTOR || 'level_zero:gpu'}}",
+        SYCL_CACHE_PERSISTENT: "{{envs.SYCL_CACHE_PERSISTENT || '1'}}",
+        PYTORCH_ENABLE_XPU_FALLBACK: "{{envs.PYTORCH_ENABLE_XPU_FALLBACK || '1'}}",
+      },
+      message: [
+        "uv pip uninstall -y onnxruntime-gpu onnxruntime nvidia-ml-py triton triton-windows xformers flash-attn bitsandbytes",
+        "uv pip install --index-url https://pypi.org/simple onnxruntime",
+      ],
+    },
+  }] : []), {
     // Existing installs may have the main runtime marker but still contain a
     // Windows FlashAttention wheel whose CUDA DLL cannot load. Repair only
     // that optional wheel once; a normal torch.js run writes both markers.
@@ -126,10 +147,26 @@ module.exports = async (kernel) => {
         xformers: true
       }
     }
-  }, {
+  }, ...(intelXpu ? [{
+      // XPU: Recheck after torch.js has installed or retained the XPU build.
+      method: "shell.run",
+      params: {
+        venv: runtime.env,
+        venv_python: runtime.python,
+        path: "app",
+        env: {
+          MAESTRO_DEVICE: "xpu",
+          ONEAPI_DEVICE_SELECTOR: "{{envs.ONEAPI_DEVICE_SELECTOR || 'level_zero:gpu'}}",
+          SYCL_CACHE_PERSISTENT: "{{envs.SYCL_CACHE_PERSISTENT || '1'}}",
+          PYTORCH_ENABLE_XPU_FALLBACK: "{{envs.PYTORCH_ENABLE_XPU_FALLBACK || '1'}}",
+        },
+        message: "python scripts/xpu_preflight.py",
+      },
+  }] : []), {
     // Mirror of the install.js GGUF-kernels step — idempotent, so
     // re-runs cheaply on every update. Catches existing installs
     // up to the new behavior without forcing a reinstall.
+    when: `{{!${intelXpu}}}`,
     method: "shell.run",
     params: {
       venv: runtime.env,

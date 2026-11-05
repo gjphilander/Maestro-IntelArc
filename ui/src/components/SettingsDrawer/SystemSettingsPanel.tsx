@@ -861,7 +861,7 @@ function ThemeSection() {
  *     (loaded once at app boot; updated optimistically on toggle)
  *   - GET /api/v1/system-detect — fetched on mount and on Re-detect
  *     click. Returns hardware + recommendation. Always succeeds; on
- *     systems without CUDA it returns a "no GPU detected" payload.
+ *     systems without a supported GPU it returns a "no GPU detected" payload.
  *
  * Side effects:
  *   - Toggle ON  → POST /api/v1/system-detect/apply (writes recommended
@@ -980,7 +980,9 @@ export function AutoPerformanceCard() {
 
   const hw = detect?.hardware
   const rec = detect?.recommended
-  const cudaOK = !!hw?.cuda_available
+  // XPU: use generic accelerator availability to keep detection active on Intel.
+  const gpuAvailable = !!(hw?.gpu_available ?? hw?.cuda_available)
+  const gpuBackend = hw?.gpu_backend || (hw?.cuda_available ? 'cuda' : 'none')
 
   return (
     <div className="space-y-3">
@@ -992,10 +994,14 @@ export function AutoPerformanceCard() {
           <Cpu size={16} className="text-text-secondary shrink-0 mt-0.5" />
           <div className="min-w-0 flex-1">
             <div className="text-sm text-text-primary truncate" title={hw?.gpu_name || ''}>
-              {cudaOK ? hw!.gpu_name : 'No CUDA GPU detected'}
+              {gpuAvailable
+                ? `${gpuBackend === 'xpu' ? 'XPU · ' : ''}${hw?.gpu_name || 'GPU'}`
+                : 'No supported GPU detected'}
             </div>
             <div className="text-[11px] text-text-muted">
-              {cudaOK ? `${hw!.gpu_vram_gb} GB VRAM · ${hw!.ram_gb} GB RAM` : `${hw?.ram_gb ?? 0} GB RAM`}
+              {gpuAvailable
+                ? `${hw!.gpu_vram_gb} GB VRAM · ${hw!.ram_gb} GB RAM`
+                : `${hw?.ram_gb ?? 0} GB RAM`}
             </div>
           </div>
         </div>
@@ -1076,7 +1082,7 @@ export function AutoPerformanceCard() {
           {/* Re-detect only relevant in auto mode. In manual mode, a
               "Reset to auto-tune" affordance lives at the bottom of the
               advanced section instead, so it's not duplicated. */}
-          {autoOn && cudaOK && (
+          {autoOn && gpuAvailable && (
             <button
               onClick={handleRedetect}
               disabled={applying}

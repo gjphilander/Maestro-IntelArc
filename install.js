@@ -1,4 +1,5 @@
 const {
+  isIntelXpu,
   isSolCapable,
   needsCuda13DriverUpdate,
   runtimeProfile,
@@ -6,16 +7,22 @@ const {
 
 module.exports = async (kernel) => {
   const runtime = runtimeProfile(kernel)
+  const intelXpu = isIntelXpu(kernel)
   return {
     requires: {
       bundle: "ai"
     },
     run: [
     {
-      when: "{{gpu !== 'nvidia'}}",
+      when: intelXpu,
+      method: "local.set",
+      params: { device: "xpu" },
+    },
+    {
+      when: `{{gpu !== 'nvidia' && !${intelXpu}}}`,
       method: "notify",
       params: {
-        html: "This app requires an NVIDIA GPU on Windows or Linux."
+        html: "Pinokio did not detect a supported NVIDIA or Intel Arc GPU. For an Intel Arc system, add MAESTRO_DEVICE=xpu to Pinokio's global ENVIRONMENT file, restart Pinokio, then run Install again."
       },
       next: null
     },
@@ -33,6 +40,11 @@ module.exports = async (kernel) => {
         venv: runtime.env,
         venv_python: runtime.python,
         path: "app",
+        ...(intelXpu ? { env: {
+          ONEAPI_DEVICE_SELECTOR: "{{envs.ONEAPI_DEVICE_SELECTOR || 'level_zero:gpu'}}",
+          SYCL_CACHE_PERSISTENT: "{{envs.SYCL_CACHE_PERSISTENT || '1'}}",
+          PYTORCH_ENABLE_XPU_FALLBACK: "{{envs.PYTORCH_ENABLE_XPU_FALLBACK || '1'}}",
+        } } : {}),
         message: [
           "uv pip install -r requirements.txt --index-strategy unsafe-best-match",
           "uv pip install hf-xet pip"
@@ -59,6 +71,7 @@ module.exports = async (kernel) => {
     // and the default INT8 / BF16 variants don't use these kernels at
     // all. Idempotent on re-runs.
     {
+      when: `{{!${intelXpu}}}`,
       method: "shell.run",
       params: {
         venv: runtime.env,

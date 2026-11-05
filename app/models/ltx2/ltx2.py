@@ -7,6 +7,7 @@ import types
 from typing import Callable, Iterator
 
 import torch
+from shared.device import resolve_device
 import torchaudio
 from accelerate import init_empty_weights
 from shared.qtypes.int8_convrot import install_native_lora_forwards
@@ -834,7 +835,8 @@ class LTX2:
         text_encoder_filepath = None,
         checkpoint_paths: dict | None = None,
     ) -> None:
-        self.device = torch.device("cuda")
+        # XPU: Keep LTX model tensors and random generators on Maestro's selected backend.
+        self.device = resolve_device()
         self.dtype = dtype
         self.VAE_dtype = VAE_dtype
         self.base_model_type = base_model_type

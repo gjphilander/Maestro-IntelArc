@@ -1,6 +1,9 @@
 """Diagnose memory failures and release resources after model frames unwind."""
 from functools import wraps
+from datetime import datetime
 import gc
+import os
+from pathlib import Path
 import sys
 import traceback
 
@@ -52,6 +55,64 @@ def log_generation_memory(cuda):
     except Exception as error:
         parts.append(f"CUDA readings incomplete ({type(error).__name__})")
     print("[Memory at failure, before cleanup] " + "; ".join(parts))
+
+
+# XPU: Save enough context to diagnose a Level Zero failure on the next restart.
+def write_xpu_failure_report(error, traceback_text, model, device, torch_version):
+    """Persist the original Level Zero failure without querying the XPU again."""
+    try:
+        root = Path(__file__).resolve().parents[2]
+        log_dir = root / "logs" / "xpu"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        timestamp = datetime.now().astimezone().strftime("%Y%m%d-%H%M%S")
+        report_path = log_dir / f"failure-{timestamp}-{os.getpid()}.log"
+        env_names = (
+            "MAESTRO_DEVICE",
+            "MAESTRO_XPU_MEMORY_FRACTION",
+            "MAESTRO_XPU_IMMEDIATE_COMMANDLISTS",
+            "ONEAPI_DEVICE_SELECTOR",
+            "SYCL_CACHE_PERSISTENT",
+            "PYTORCH_ENABLE_XPU_FALLBACK",
+            "SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS",
+            "NEO_LOCAL_MEMORY_ALLOCATION_MODE",
+            "SYCL_LAUNCH_BLOCKING",
+            "SYCL_UR_TRACE",
+        )
+        environment = "\n".join(
+            f"{name}={os.environ.get(name, '<unset>')}" for name in env_names
+        )
+        try:
+            import psutil
+
+            memory = psutil.virtual_memory()
+            process = psutil.Process().memory_info()
+            ram_summary = (
+                f"system_ram_used_gib={memory.used / 1024**3:.2f}/"
+                f"{memory.total / 1024**3:.2f}\n"
+                f"system_ram_available_gib={memory.available / 1024**3:.2f}\n"
+                f"process_rss_gib={process.rss / 1024**3:.2f}"
+            )
+        except Exception as memory_error:
+            ram_summary = f"RAM readings unavailable: {memory_error}"
+
+        report_path.write_text(
+            "Maestro Intel XPU failure report\n"
+            f"time={datetime.now().astimezone().isoformat()}\n"
+            f"model={model}\n"
+            f"device={device}\n"
+            f"torch={torch_version}\n"
+            "XPU allocator/device statistics were intentionally not queried after "
+            "the Level Zero failure.\n\n"
+            f"{ram_summary}\n\n"
+            f"Environment:\n{environment}\n\n"
+            f"Error:\n{type(error).__name__}: {error}\n\n"
+            f"Traceback:\n{traceback_text}",
+            encoding="utf-8",
+        )
+        return str(report_path)
+    except Exception as report_error:
+        print(f"[XPU] Could not write failure report: {report_error}")
+        return None
 
 
 def cleanup_failed_generation(cleanup):

@@ -13,6 +13,7 @@ import torch
 from accelerate import init_empty_weights
 
 from mmgp import offload
+from shared.device import resolve_device
 from shared.utils import files_locator as fl
 
 from .configs import KugelAudioConfig
@@ -181,9 +182,9 @@ class KugelAudioPipeline:
         first_param = next(model.parameters(), None)
         if first_param is not None:
             model._model_dtype = first_param.dtype
-        model._input_device = (
-            torch.device("cuda") if torch.cuda.is_available() else self.device
-        )
+        # XPU: embedding IDs must follow the active accelerator, not the CPU
+        # staging device used while loading the offloaded model.
+        model._input_device = resolve_device()
         return model
 
     def _load_processor(self, tokenizer_dir: str) -> KugelAudioProcessor:

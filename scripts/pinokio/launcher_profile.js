@@ -34,6 +34,25 @@ const needsCuda13DriverUpdate = (kernel = {}) => {
   return Number.isFinite(driver) && driver < 580
 }
 
+// XPU: Detect Intel GPUs before the Python environment exists; the runtime
+// preflight performs the authoritative torch.xpu probe after installation.
+const isIntelXpu = (kernel = {}) => (
+  kernel.gpu !== "nvidia" && (
+    String(kernel.envs?.MAESTRO_DEVICE || "").toLowerCase() === "xpu"
+    || [kernel.gpu, kernel.gpu_model, kernel.gpu_model_name]
+      .some((value) => /intel|arc/i.test(String(value || "")))
+  )
+)
+
+const xpuRuntimeProfile = () => ({
+  env: "env-xpu",
+  python: "3.12",
+  marker: "app/env-xpu/.maestro_xpu_runtime_v1.installed",
+  flashMarker: "app/env-xpu/.maestro_xpu_preflight_v1.passed",
+  flashSupported: false,
+  label: "Intel XPU",
+})
+
 const legacyRuntimeProfile = (kernel = {}) => {
   if (isRtx50(kernel)) {
     return {
@@ -83,18 +102,21 @@ const solRuntimeProfile = (kernel = {}) => {
 // runtime on GPUs supported by H3 Sol Engine. Existing RTX 40 installations
 // retain app/env as a recovery path; start.js falls back to it automatically
 // until the normal Update flow finishes this side-by-side migration.
-const runtimeProfile = (kernel = {}) => (
-  isSolCapable(kernel) && !needsCuda13DriverUpdate(kernel)
+const runtimeProfile = (kernel = {}) => {
+  if (isIntelXpu(kernel)) return xpuRuntimeProfile()
+  return isSolCapable(kernel) && !needsCuda13DriverUpdate(kernel)
     ? solRuntimeProfile(kernel)
     : legacyRuntimeProfile(kernel)
-)
+}
 
 module.exports = {
   isRtx40,
   isRtx50,
   isSolCapable,
+  isIntelXpu,
   needsCuda13DriverUpdate,
   legacyRuntimeProfile,
   runtimeProfile,
   solRuntimeProfile,
+  xpuRuntimeProfile,
 }

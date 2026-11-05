@@ -1,4 +1,5 @@
 const {
+  isIntelXpu,
   isSolCapable,
   needsCuda13DriverUpdate,
   runtimeProfile,
@@ -62,10 +63,15 @@ const testBenchMenu = (endpoint, info) => [{
 module.exports = {
   version: "8.0",
   title: "Maestro",
-  description: "An all-in-one, 100% local AI creative studio, director, and multi-track editor. Generate with MiniMax H3, LTX-2.5/2.3, Wan, Flux, Qwen, and more; turn an idea or song into a planned production; then finish it on the timeline. Requires an NVIDIA GPU (6GB+ VRAM).",
+  description: "An all-in-one local AI creative studio, director, and multi-track editor. NVIDIA CUDA is supported; Intel Arc XPU support is experimental and uses PyTorch XPU.",
   icon: "docs/images/maestro-icon.png",
   menu: async (kernel, info) => {
-    const runtime = runtimeProfile(kernel)
+    // XPU: Keep the selected runtime visible when Pinokio's GPU inventory is
+    // not populated, but a prior install recorded the Intel environment.
+    const intelXpu = kernel.gpu !== "nvidia" && (
+      isIntelXpu(kernel) || info.exists("app/env-xpu/.maestro_xpu_runtime_v1.installed")
+    )
+    const runtime = runtimeProfile(intelXpu ? { ...kernel, gpu: "intel" } : kernel)
     const solCapable = isSolCapable(kernel)
     const cuda13DriverUpdateRequired = solCapable && needsCuda13DriverUpdate(kernel)
     const samReady = info.exists("app/services/sam/env/.maestro-sam-ready")
@@ -73,7 +79,7 @@ module.exports = {
     // before its hardware inventory has populated that property, which would
     // hide Start from supported systems. install.js retains the documented
     // execution-time NVIDIA check for fresh installations.
-    let installed = info.exists("app/env") || info.exists("app/env-rtx50") || info.exists("app/env-sol")
+    let installed = info.exists("app/env") || info.exists("app/env-rtx50") || info.exists("app/env-sol") || info.exists("app/env-xpu")
     let runtimeReady = info.exists(runtime.marker) && info.exists(runtime.flashMarker)
     let running = {
       install: info.running("install.js"),
@@ -212,8 +218,14 @@ module.exports = {
       } else {
         return [{
           icon: "fa-solid fa-power-off",
-          text: "Start",
+          text: intelXpu ? "Start (Intel XPU)" : "Start",
           href: "start.js",
+        }, {
+          icon: "fa-solid fa-microchip",
+          text: intelXpu
+            ? "Detected: Intel Arc XPU"
+            : kernel.gpu === "nvidia" ? "Detected: NVIDIA CUDA" : "GPU not detected",
+          href: "README.md#intel-arc-xpu-support",
         }, {
           icon: "fa-solid fa-shield-halved",
           text: "<div><strong>Secure Remote Access (Tailscale)</strong><div>Start Maestro first, then run this action again to create its private HTTPS address.</div></div>",

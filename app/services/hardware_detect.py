@@ -97,19 +97,27 @@ def _supports_mmgp_allocator(
 
 
 def _detect_gpu() -> dict:
-    """Detect GPU specs. Returns CUDA-only fields; safe to call without CUDA.
+    """Detect CUDA or Intel XPU specs without initializing model weights.
 
     Returns dict with keys:
       cuda_available: bool
-      gpu_name: str (empty if no CUDA)
-      gpu_vram_gb: float (0 if no CUDA)
+      xpu_available: bool
+      gpu_available: bool
+      gpu_backend: str
+      gpu_name: str (empty if no accelerator)
+      gpu_vram_gb: float (0 if no accelerator)
+      gpu_memory_allocated_gb: float
       gpu_capability: str (e.g. "sm89", "sm120", or "" if no CUDA)
       gpu_capability_tuple: tuple[int, int] | None
     """
     out = {
         "cuda_available": False,
+        "xpu_available": False,
+        "gpu_available": False,
+        "gpu_backend": "none",
         "gpu_name": "",
         "gpu_vram_gb": 0.0,
+        "gpu_memory_allocated_gb": 0.0,
         "gpu_capability": "",
         "gpu_capability_tuple": None,
         "nvidia_cuda": False,
@@ -126,16 +134,39 @@ def _detect_gpu() -> dict:
         runtime_version = cuda_runtime or hip_runtime
         out["runtime_version"] = str(runtime_version) if runtime_version else "unknown"
         out["nvidia_cuda"] = bool(cuda_runtime and not hip_runtime)
-        if not torch.cuda.is_available():
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            major, minor = torch.cuda.get_device_capability(0)
+            out["cuda_available"] = True
+            out["gpu_available"] = True
+            out["gpu_backend"] = "cuda"
+            out["gpu_name"] = torch.cuda.get_device_name(0)
+            out["gpu_vram_gb"] = round(props.total_memory / (1024 ** 3), 1)
+            try:
+                out["gpu_memory_allocated_gb"] = round(
+                    torch.cuda.memory_allocated(0) / (1024 ** 3), 2
+                )
+            except Exception:
+                pass
+            out["gpu_capability"] = f"sm{major}{minor}"
+            out["gpu_capability_tuple"] = (major, minor)
             return out
-        props = torch.cuda.get_device_properties(0)
-        major, minor = torch.cuda.get_device_capability(0)
-        out["cuda_available"] = True
-        out["gpu_name"] = torch.cuda.get_device_name(0)
-        # total_memory is bytes; convert to GB rounded to 1 decimal
-        out["gpu_vram_gb"] = round(props.total_memory / (1024 ** 3), 1)
-        out["gpu_capability"] = f"sm{major}{minor}"
-        out["gpu_capability_tuple"] = (major, minor)
+
+        # XPU: keep cuda_available false so CUDA-only kernel gates stay intact.
+        xpu = getattr(torch, "xpu", None)
+        if xpu is not None and xpu.is_available():
+            props = xpu.get_device_properties(0)
+            out["xpu_available"] = True
+            out["gpu_available"] = True
+            out["gpu_backend"] = "xpu"
+            out["gpu_name"] = xpu.get_device_name(0)
+            out["gpu_vram_gb"] = round(props.total_memory / (1024 ** 3), 1)
+            try:
+                out["gpu_memory_allocated_gb"] = round(
+                    xpu.memory_allocated(0) / (1024 ** 3), 2
+                )
+            except Exception:
+                pass
     except Exception:
         # Any failure (driver issue, AMD without ROCm, etc.) → return
         # the no-CUDA defaults. Recommendation engine will pick the
@@ -241,8 +272,12 @@ def detect_hardware() -> dict:
 
     Schema (all keys always present):
       cuda_available: bool
-      gpu_name: str             — friendly GPU name, e.g. "NVIDIA GeForce RTX 4090"
-      gpu_vram_gb: float        — total VRAM in GB, 0.0 if no CUDA
+      xpu_available: bool
+      gpu_available: bool       — CUDA or XPU accelerator is available
+      gpu_backend: str          — "cuda", "xpu", or "none"
+      gpu_name: str             — friendly GPU name
+      gpu_vram_gb: float        — total VRAM in GB, 0.0 if no accelerator
+      gpu_memory_allocated_gb: float — memory used by this process
       gpu_capability: str       — e.g. "sm89", "" if no CUDA
       ram_gb: float             — total system RAM in GB
       ram_available_gb: float  — currently available system RAM in GB
@@ -258,7 +293,7 @@ def detect_hardware() -> dict:
       supports_flash: bool      — flash attention usable
       supports_triton: bool     — triton compiler available
       ram_tier: str             — "high" (nominal 64GB; ≥63.5GiB) | "low" (nominal 32GB; ≥31.5GiB) | "very_low"
-      vram_tier: str            — "high" (≥24GB) | "low" (12-23GB) | "tight" (<12GB) | "none" (no CUDA)
+      vram_tier: str            — "high" (≥24GB) | "low" (12-23GB) | "tight" (<12GB) | "none" (no accelerator)
     """
     gpu = _detect_gpu()
     kernels = _detect_kernel_support(gpu["gpu_capability_tuple"])
@@ -279,7 +314,7 @@ def detect_hardware() -> dict:
     ram_tier = ram_tier_for_gb(ram_gb)
 
     vram_gb = gpu["gpu_vram_gb"]
-    if not gpu["cuda_available"]:
+    if not gpu["gpu_available"]:
         vram_tier = "none"
     elif vram_gb >= 24:
         vram_tier = "high"
@@ -290,8 +325,12 @@ def detect_hardware() -> dict:
 
     out = {
         "cuda_available": gpu["cuda_available"],
+        "xpu_available": gpu["xpu_available"],
+        "gpu_available": gpu["gpu_available"],
+        "gpu_backend": gpu["gpu_backend"],
         "gpu_name": gpu["gpu_name"],
         "gpu_vram_gb": gpu["gpu_vram_gb"],
+        "gpu_memory_allocated_gb": gpu["gpu_memory_allocated_gb"],
         "gpu_capability": gpu["gpu_capability"],
         "ram_gb": ram_gb,
         "ram_available_gb": ram_available_gb,

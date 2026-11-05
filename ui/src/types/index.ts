@@ -1457,6 +1457,10 @@ export interface ServicesConfig {
  *  if you add new probe fields there. */
 export interface HardwareInfo {
   cuda_available: boolean
+  // XPU: Intel PyTorch backend and generic accelerator detection fields.
+  xpu_available?: boolean
+  gpu_available?: boolean
+  gpu_backend?: string
   gpu_name: string
   gpu_vram_gb: number
   gpu_capability: string  // e.g. "sm89", "sm120", or "" if no CUDA
@@ -1709,6 +1713,11 @@ export interface SystemStats {
   ram: { percent: number; used_gb: number; total_gb: number }
   gpu: {
     available: boolean
+    // XPU: backend and device name for the selected Intel accelerator.
+    backend?: string
+    name?: string
+    // XPU: utilization is not reported by the current telemetry provider.
+    utilization_available?: boolean
     /** Headline GPU utilization. On Windows this is the 3D-engine perf
      *  counter (matches Task Manager); elsewhere the NVML/nvidia-smi value. */
     percent: number

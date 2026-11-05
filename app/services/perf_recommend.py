@@ -205,7 +205,7 @@ def recommend_settings(hw: dict) -> dict:
     underscore prefix marks it as not a config value to apply, just
     metadata for display).
 
-    AMD/CPU fallback: when `cuda_available=False`, returns the most
+    CPU fallback: when neither CUDA nor XPU is available, returns the most
     conservative profile (4.5 + INT8 + aggressive tiling) and a
     label noting auto-tune isn't really applicable. The user will
     likely want to manually configure, but at least nothing crashes
@@ -223,13 +223,14 @@ def recommend_settings(hw: dict) -> dict:
       _recommendation_label: str — for the UI card readout
       _recommendation_reason: str — for the tooltip / debug log
     """
-    cuda_available = bool(hw.get("cuda_available", False))
+    accelerator_available = bool(
+        hw.get("cuda_available", False) or hw.get("xpu_available", False)
+    )
     ram_gb = float(hw.get("ram_gb") or 0)
     platform_name = str(hw.get("platform", ""))
     allocator_supported = bool(hw.get("supports_mmgp_allocator", False))
-    if not cuda_available:
-        # No CUDA — return conservative fallback. User probably needs
-        # manual setup, but defaults shouldn't crash.
+    if not accelerator_available:
+        # No supported accelerator — use conservative CPU-oriented settings.
         return {
             "video_profile": 4.5,
             "image_profile": 4.5,
@@ -253,12 +254,12 @@ def recommend_settings(hw: dict) -> dict:
             "audio_preload_in_VRAM": 0,
             "_recommendation_label": "Auto-tune unavailable on this hardware",
             "_recommendation_reason": (
-                "No CUDA-capable GPU detected. Maestro requires NVIDIA GPU "
-                "with 6+ GB VRAM. Default conservative profile applied — "
+                "No CUDA or Intel XPU accelerator detected. Default "
+                "conservative profile applied — "
                 "performance may be limited."
             ),
             "_recommendation_details": [
-                "The profile favors additional host offload because no CUDA GPU was detected.",
+                "The profile favors additional host offload because no supported GPU was detected.",
                 "Memory controls use safe defaults; the allocator remains on the runtime default.",
                 "Preload modes stay at default/0, while smart memory pinning remains enabled and runtime limits stay automatic.",
                 "The generation-aware planner uses workload dimensions and learned VRAM peaks for temporary per-job model budgets; it does not change Sol mode or quality settings.",
@@ -296,7 +297,8 @@ def recommend_settings(hw: dict) -> dict:
         audio_profile = profile
 
     reason = (
-        f"{gpu_name} ({vram_gb} GB VRAM, {ram_gb} GB RAM): "
+        f"{gpu_name} ({vram_gb} GB VRAM, {ram_gb} GB RAM; "
+        f"{str(hw.get('gpu_backend') or 'cuda').upper()}): "
         f"VRAM tier={vram_tier}, RAM tier={ram_tier} → profile {profile:g}, "
         f"audio profile {audio_profile:g}, "
         f"{quant.upper()}, VAE config {vae}, coefficient {coef}"
@@ -318,7 +320,11 @@ def recommend_settings(hw: dict) -> dict:
         (
             "The bundled MMGP allocator is available for this CUDA platform."
             if allocator_supported else
-            "The bundled MMGP allocator is unavailable for this CUDA platform; the runtime default is retained."
+            (
+                "The bundled MMGP allocator is CUDA-only; XPU uses the runtime default allocator."
+                if hw.get("xpu_available") else
+                "The bundled MMGP allocator is unavailable for this CUDA platform; the runtime default is retained."
+            )
         ),
         "The generation-aware planner uses workload dimensions and learned VRAM peaks for temporary per-job model budgets; it does not change Sol mode or quality settings.",
         "On eligible H3 video jobs, Auto-owned head splitting can change per job from the requested workload; the saved setting remains unchanged.",
@@ -407,7 +413,7 @@ def apply_auto_performance(config: dict, hw: dict, *, force: bool = False) -> di
     """
     if not force and (
         not auto_performance_needs_refresh(config)
-        or not hw.get("cuda_available", False)
+        or not hw.get("gpu_available", hw.get("cuda_available", False))
     ):
         return None
 
@@ -461,7 +467,9 @@ def apply_auto_performance(config: dict, hw: dict, *, force: bool = False) -> di
             updated[key] = value
 
     services["auto_performance"] = True
-    services["auto_performance_applied"] = bool(hw.get("cuda_available", False))
+    services["auto_performance_applied"] = bool(
+        hw.get("gpu_available", hw.get("cuda_available", False))
+    )
     services["auto_performance_revision"] = (
         AUTO_PERFORMANCE_REVISION if services["auto_performance_applied"] else 0
     )

@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterator
 
 import torch
 import torch.nn.functional as F
+from shared.device import synchronize
 
 from ..inpainting import (
     _apply_ltx2_mask_blend,
@@ -438,7 +439,7 @@ class _TransformerBenchWrapper:
         if torch.cuda.is_available():
             if not self._cuda_events:
                 return 0.0, 0
-            torch.cuda.synchronize()
+            synchronize()
             total_ms = 0.0
             for start, end in self._cuda_events:
                 total_ms += float(start.elapsed_time(end))
@@ -686,7 +687,7 @@ class DistilledPipeline:
         else:
             contexts = self.text_encoder_cache.encode(encode_fn, [prompt], device=self.device, parallel=True)
 
-        torch.cuda.synchronize()
+        synchronize()
         del text_encoder
         cleanup_memory()
         if float(NAG_scale) > 1.0 and negative_prompt:
@@ -932,7 +933,7 @@ class DistilledPipeline:
         # upscale, no stage-2 refine. stage_1_output_shape already has the
         # target resolution in this branch.
         if single_stage and not full_resolution_refine:
-            torch.cuda.synchronize()
+            synchronize()
             del transformer
             del video_encoder
             cleanup_memory()
@@ -1039,7 +1040,7 @@ class DistilledPipeline:
                 upsampler=self._get_model("spatial_upsampler"),
             )
 
-        torch.cuda.synchronize()
+        synchronize()
         cleanup_memory()
 
         if full_resolution_refine:
@@ -1225,7 +1226,7 @@ class DistilledPipeline:
         if interrupt_check is not None and interrupt_check():
             return None, None
 
-        torch.cuda.synchronize()
+        synchronize()
         del transformer
         del video_encoder
         cleanup_memory()

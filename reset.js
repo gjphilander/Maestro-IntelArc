@@ -8,6 +8,8 @@ module.exports = {
     { method: "fs.rm", params: { path: "app/env-rtx50" } },
     // Preferred RTX 40-series Python 3.11 / CUDA 13 H3 performance venv
     { method: "fs.rm", params: { path: "app/env-sol" } },
+    // XPU: Separate Intel PyTorch and Level Zero runtime environment
+    { method: "fs.rm", params: { path: "app/env-xpu" } },
     // Optional official LTX-2.5 / Transformers 5.x sidecar venv
     { method: "fs.rm", params: { path: "app/env-ltx25" } },
     // LTX-2.5 sidecars paired to optional CUDA 13 hardware runtimes

@@ -79,11 +79,25 @@ def reference_cache_plan(transformer, prompt_embeds, image_mask, reference_rows,
         cache_rows += negative_rows
         largest_prefix = max(largest_prefix, negative_rows)
     required = 2 * layers * width * itemsize * batch * cache_rows
-    if torch.device(device).type != "cuda":
+    selected_device = torch.device(device)
+    if selected_device.type == "cuda":
+        backend = torch.cuda
+    elif selected_device.type == "xpu":
+        # XPU: use Intel allocator statistics to keep reference caching within VRAM.
+        backend = torch.xpu
+    else:
         return required, float("inf")
 
-    free, _ = torch.cuda.mem_get_info(device)
-    reusable = max(0, torch.cuda.memory_reserved(device) - torch.cuda.memory_allocated(device))
+    try:
+        free, _ = backend.mem_get_info(selected_device)
+        reusable = max(
+            0,
+            backend.memory_reserved(selected_device)
+            - backend.memory_allocated(selected_device),
+        )
+    except (AttributeError, RuntimeError, TypeError):
+        # If allocator statistics are unavailable, conservatively skip the cache.
+        return required, 0
     # QKV, RoPE/norm temporaries, residuals and the gated MLP at the largest
     # prefill shape. Keep an additional GiB for kernels and allocator slack.
     workspace = max(2 * GIB, (largest_prefix + target_rows) * batch * width * itemsize * 24) + GIB

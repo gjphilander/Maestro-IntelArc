@@ -39,9 +39,9 @@ def _h3_vae_decode_tile_batch_size(
     tile_width: int,
     num_tiles: int,
 ) -> int:
-    """Return a conservative spatial decoder batch size for roomy CUDA devices."""
+    """Return a conservative spatial decoder batch size for roomy GPUs."""
     if (
-        device.type != "cuda"
+        device.type not in ("cuda", "xpu")
         or batch_size != 1
         or num_tiles < 2
         or tile_height > 256
@@ -50,10 +50,18 @@ def _h3_vae_decode_tile_batch_size(
         return 1
 
     try:
-        if torch.cuda.get_device_properties(device).total_memory < 10 * 1024**3:
+        from shared.device import device_backend
+
+        backend = device_backend(device)
+        if backend is None:
             return 1
-        free_memory, _ = torch.cuda.mem_get_info(device)
-    except RuntimeError:
+        if backend.get_device_properties(device).total_memory < 10 * 1024**3:
+            return 1
+        mem_get_info = getattr(backend, "mem_get_info", None)
+        if not callable(mem_get_info):
+            return 1
+        free_memory, _ = mem_get_info(device)
+    except Exception:
         return 1
 
     return 2 if free_memory >= 2 * 1024**3 else 1
@@ -76,7 +84,14 @@ def video_vae_offload_models(vae, *, device_mem_capacity: int | None = None) -> 
     if hasattr(vae, "_model_dtype"):
         encoder._model_dtype = decoder._model_dtype = vae._model_dtype
     if device_mem_capacity is None:
-        device_mem_capacity = torch.cuda.get_device_properties(None).total_memory if torch.cuda.is_available() else 0
+        from shared.device import get_device_properties, resolve_device
+
+        active_device = resolve_device()
+        device_mem_capacity = (
+            get_device_properties(active_device).total_memory
+            if active_device.type in ("cuda", "xpu")
+            else 0
+        )
     if device_mem_capacity >= 10 * 1024**3:
         decoder._budget = 0
     return {"vae": decoder, "video_encoder": encoder}

@@ -175,8 +175,8 @@ class MiniMaxH3Conditioner(nn.Module):
         # and quantized attention weights with FP32 LayerNorm parameters. A
         # single input cast cannot satisfy that tower: patch embedding forces
         # hidden states back to FP16, then an un-autocast FP32 LayerNorm raises
-        # ``expected scalar type Half but found Float``. CUDA FP16 autocast is
-        # the checkpoint's intended execution contract; keep it scoped to
+        # ``expected scalar type Half but found Float``. FP16 autocast is the
+        # checkpoint's intended CUDA/XPU execution contract; keep it scoped to
         # GGUF so the known-good NVFP4/AWQ path remains unchanged.
         self.gguf_vision_autocast = bool(gguf_vision_autocast)
         self._interrupt = False
@@ -228,11 +228,10 @@ class MiniMaxH3Conditioner(nn.Module):
 
         pixels = pixel_values.to(device=device, dtype=torch.float32)
         grid = grid_thw.to(device)
-        autocast = (
-            torch.autocast(device_type="cuda", dtype=torch.float16)
-            if self.gguf_vision_autocast and device.type == "cuda"
-            else nullcontext()
-        )
+        if self.gguf_vision_autocast and device.type in ("cuda", "xpu"):
+            autocast = torch.autocast(device_type=device.type, dtype=torch.float16)
+        else:
+            autocast = nullcontext()
         with autocast:
             return self.qwen.visual(pixels, grid_thw=grid)
 
@@ -273,6 +272,12 @@ class MiniMaxH3Conditioner(nn.Module):
         self.qwen.visual._interrupt = self._interrupt
         if self._interrupt:
             return None, None
+        if device.type == "xpu" and not getattr(self, "_xpu_device_reported", False):
+            self._xpu_device_reported = True
+            print(
+                "[MiniMax H3 XPU] Prompt tensors target XPU; "
+                f"GGUF vision FP16 autocast={'enabled' if self.gguf_vision_autocast else 'not applicable'}."
+            )
 
         merge_size = self.processor.image_processor.merge_size**2
         pixel_values = image_grid_thw = None
@@ -370,6 +375,17 @@ class MiniMaxH3Conditioner(nn.Module):
         )
         if outputs.last_hidden_state is None or not outputs.mid_results:
             return None, None
+        if device.type == "xpu" and not getattr(self, "_xpu_output_reported", False):
+            self._xpu_output_reported = True
+            try:
+                allocated_gb = torch.xpu.memory_allocated(device) / (1024 ** 3)
+                allocation = f", PyTorch allocated={allocated_gb:.2f} GiB"
+            except Exception:
+                allocation = ""
+            print(
+                "[MiniMax H3 XPU] Prompt encoder output is on "
+                f"{outputs.mid_results[0].device}{allocation}."
+            )
         return outputs.mid_results[0], torch.tensor(token_tags, dtype=torch.long)
 
     @torch.inference_mode()

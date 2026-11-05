@@ -16,6 +16,7 @@ from functools import partial
 import numpy as np
 import torch
 import torch.nn.functional as F
+from shared.device import resolve_device
 from accelerate import init_empty_weights
 from diffusers.models.autoencoders.vae import DiagonalGaussianDistribution
 from diffusers.utils.torch_utils import randn_tensor
@@ -1431,7 +1432,8 @@ class MiniMaxH3Model:
         minimax_h3_veda: bool = False,
         **_kwargs,
     ):
-        self.device = torch.device("cuda")
+        # XPU: Keep H3 tensors and its random generator on Maestro's selected backend.
+        self.device = resolve_device()
         self.dtype = dtype
         self.model_def = model_def
         self.video_vae_variant = str(
@@ -3355,8 +3357,8 @@ class MiniMaxH3Model:
             video_std = torch.tensor(VIDEO_LATENTS_STD, device=self.device).view(1, -1, 1, 1, 1)
             video_latents = video_latents * video_std + video_mean
             autocast = (
-                torch.autocast(device_type="cuda", dtype=torch.float16)
-                if self.device.type == "cuda"
+                torch.autocast(device_type=self.device.type, dtype=torch.float16)
+                if self.device.type in ("cuda", "xpu")
                 else nullcontext()
             )
             with autocast:

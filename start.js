@@ -1,4 +1,5 @@
 const {
+  isIntelXpu,
   isRtx50,
   legacyRuntimeProfile,
   runtimeProfile,
@@ -17,14 +18,15 @@ module.exports = async (kernel) => {
   // conflict-safe dynamic port behavior.
   const port = `{{local.remote_access && local.remote_access.enabled && local.remote_access.pinokio_port_lock && local.remote_access.target_port ? local.remote_access.target_port : ${fallbackPort}}}`
   const runtime = runtimeProfile(kernel)
+  const intelXpu = isIntelXpu(kernel)
+  const xpuRuntime = require("./scripts/pinokio/launcher_profile").xpuRuntimeProfile()
+  const xpuMarker = xpuRuntime.marker
+  // XPU: Reuse an installed XPU environment when Pinokio GPU inventory is unavailable.
+  const xpuSelected = `{{${intelXpu} || (gpu !== 'nvidia' && exists('${xpuMarker}'))}}`
   const legacyRuntime = legacyRuntimeProfile(kernel)
   const hasRecoveryRuntime = runtime.env !== legacyRuntime.env
-  const selectedEnv = hasRecoveryRuntime
-    ? `{{exists('${runtime.marker}') ? '${runtime.env}' : '${legacyRuntime.env}'}}`
-    : runtime.env
-  const selectedPython = hasRecoveryRuntime
-    ? `{{exists('${runtime.marker}') ? '${runtime.python}' : '${legacyRuntime.python}'}}`
-    : runtime.python
+  const selectedEnv = `{{${xpuSelected.slice(2, -2)} ? '${xpuRuntime.env}' : ${hasRecoveryRuntime ? `exists('${runtime.marker}') ? '${runtime.env}' : '${legacyRuntime.env}'` : `'${runtime.env}'`}}}`
+  const selectedPython = `{{${xpuSelected.slice(2, -2)} ? '${xpuRuntime.python}' : ${hasRecoveryRuntime ? `exists('${runtime.marker}') ? '${runtime.python}' : '${legacyRuntime.python}'` : `'${runtime.python}'`}}}`
   const runtimeGuard = isRtx50(kernel) ? [{
     when: `{{!exists('${runtime.marker}')}}`,
     method: "input",
@@ -54,6 +56,24 @@ module.exports = async (kernel) => {
         params: ["url", "port"],
       },
       ...runtimeGuard,
+      {
+        when: xpuSelected,
+        // XPU: Recheck driver/runtime visibility and numerical kernels before
+        // the backend creates model state on the device.
+        method: "shell.run",
+        params: {
+          venv: selectedEnv,
+          venv_python: selectedPython,
+          path: "app",
+          env: {
+            MAESTRO_DEVICE: "xpu",
+            ONEAPI_DEVICE_SELECTOR: "{{envs.ONEAPI_DEVICE_SELECTOR || 'level_zero:gpu'}}",
+            SYCL_CACHE_PERSISTENT: "{{envs.SYCL_CACHE_PERSISTENT || '1'}}",
+            PYTORCH_ENABLE_XPU_FALLBACK: "{{envs.PYTORCH_ENABLE_XPU_FALLBACK || '1'}}",
+          },
+          message: "python scripts/xpu_preflight.py",
+        },
+      },
       {
         when: "{{exists('app/settings/remote_access.json')}}",
         method: "json.get",
@@ -114,7 +134,12 @@ module.exports = async (kernel) => {
           venv: selectedEnv,
           venv_python: selectedPython,
           env: {
-            SERVER_PORT: port
+            SERVER_PORT: port,
+            // XPU: Resolve from Pinokio GPU metadata or the installed runtime marker.
+            MAESTRO_DEVICE: `{{${xpuSelected.slice(2, -2)} ? 'xpu' : ''}}`,
+            ONEAPI_DEVICE_SELECTOR: "{{envs.ONEAPI_DEVICE_SELECTOR || 'level_zero:gpu'}}",
+            SYCL_CACHE_PERSISTENT: "{{envs.SYCL_CACHE_PERSISTENT || '1'}}",
+            PYTORCH_ENABLE_XPU_FALLBACK: "{{envs.PYTORCH_ENABLE_XPU_FALLBACK || '1'}}",
           },
           path: "app",
           message: [

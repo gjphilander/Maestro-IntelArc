@@ -105,7 +105,7 @@ def _blackwell_16gb_h3_video_class(hardware, model_def, params, output_type):
 
 def hardware_key(hardware):
     return _digest({key: hardware.get(key) for key in (
-        "gpu_name", "gpu_vram_gb", "ram_gb", "gpu_capability", "driver_version",
+        "gpu_name", "gpu_vram_gb", "gpu_backend", "gpu_available", "ram_gb", "gpu_capability", "driver_version",
         "torch_version", "runtime_version", "platform", "machine", "allocator_active", "runtime_signature", "ram_allocator_active",
     )} | {
         "revision": REVISION,
@@ -229,7 +229,7 @@ def build_performance_plan(hardware, config, model_def, params, adjustment=None,
     default_ram_fraction = .4 if hardware.get("platform") == "win32" else .5
     mode = config.get(f"{output_type}_preload_mode", "default")
     explicit_profile = _number(params.get("override_profile"), -1) >= 0
-    applied = bool(hardware.get("cuda_available") and vram > 0
+    applied = bool(hardware.get("gpu_available", hardware.get("cuda_available")) and vram > 0
                    and auto_owns(config, f"{output_type}_profile")
                    and mode == "default" and not explicit_profile
                    and _number(cli.get("profile"), -1) < 0

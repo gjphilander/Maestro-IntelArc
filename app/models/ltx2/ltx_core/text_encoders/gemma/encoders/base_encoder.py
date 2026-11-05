@@ -3,6 +3,7 @@ from typing import NamedTuple
 from pathlib import Path
 
 import torch
+from shared.device import resolve_device
 from einops import rearrange
 from transformers import AutoImageProcessor, Gemma3ForConditionalGeneration, Gemma3Processor, Gemma3ForCausalLM
 
@@ -480,7 +481,8 @@ def postprocess_text_embeddings(
     """
     projected = []
     for item in embeddings:
-        attention_mask = item.attention_mask.to("cuda")
+        # XPU: Keep Gemma prompt masks on Maestro's selected accelerator.
+        attention_mask = item.attention_mask.to(resolve_device())
         encoded_video_input, encoded_audio_input = _apply_feature_extractor(
             item.hidden_states,
             attention_mask,

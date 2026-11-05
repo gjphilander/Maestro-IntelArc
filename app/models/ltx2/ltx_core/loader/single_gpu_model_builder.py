@@ -3,6 +3,7 @@ from dataclasses import dataclass, field, replace
 from typing import Generic
 
 import torch
+from shared.device import resolve_device
 
 from .module_ops import ModuleOps
 from .primitives import (
@@ -124,7 +125,8 @@ class SingleGPUModelBuilder(Generic[ModelType], ModelBuilderProtocol[ModelType],
         return retval
 
     def build(self, device: torch.device | None = None, dtype: torch.dtype | None = None) -> ModelType:
-        device = torch.device("cuda") if device is None else device
+        # XPU: Resolve the fallback device through Maestro instead of assuming CUDA.
+        device = resolve_device() if device is None else device
         config = self.model_config()
         meta_model = self.meta_model(config, self.module_ops)
         from mmgp import offload as mmgp_offload

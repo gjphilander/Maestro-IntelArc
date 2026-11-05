@@ -5,6 +5,7 @@ import torchvision
 from einops import rearrange
 from PIL import Image
 from torch import Tensor
+from shared.device import resolve_device
 
 # from .model import Flux2
 
@@ -69,11 +70,15 @@ def encode_image_refs(ae, img_ctx: list[Image.Image]):
     # Encode each reference image
     encoded_refs = []
     for img in img_ctx_prep:
-        encoded = ae.encode(img[None].cuda())[0]
+        # XPU: keep reference tensors on the same selected device as the VAE.
+        encoded = ae.encode(img[None].to(resolve_device()))[0]
         encoded_refs.append(encoded)
 
     # Create time offsets for each reference
-    t_off = [scale + scale * t for t in torch.arange(0, len(encoded_refs))]
+    t_off = [
+        scale + scale * t
+        for t in torch.arange(0, len(encoded_refs), device=encoded_refs[0].device)
+    ]
     t_off = [t.view(-1) for t in t_off]
 
     # Process with position IDs

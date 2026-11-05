@@ -55,6 +55,16 @@
 #
 
 import torch
+from shared.device import (
+    device_backend,
+    resolve_device,
+    synchronize as synchronize_device,
+    xpu_runtime_unsafe,
+)
+
+# XPU: Keep MMGP transfers on the accelerator selected by Maestro.
+_ACTIVE_DEVICE = resolve_device()
+_DEVICE_API = device_backend(_ACTIVE_DEVICE) or torch.cuda
 import gc
 import collections
 import time
@@ -78,6 +88,18 @@ from functools import wraps
 import functools
 import types
 import inspect
+
+
+def _synchronize_device():
+    """Use the shared bounded sync policy for the selected accelerator."""
+    return synchronize_device(_ACTIVE_DEVICE)
+
+
+def _empty_cache_device():
+    """Avoid calling into XPU cache management after synchronization fails."""
+    if _ACTIVE_DEVICE.type == "xpu" and xpu_runtime_unsafe():
+        return
+    return _DEVICE_API.empty_cache()
 
 from mmgp import safetensors2
 from .read_ahead import ReadAhead, BATCH as READ_AHEAD_BATCH, WINDOW as READ_AHEAD_WINDOW, MAX_RANGES as READ_AHEAD_MAX_RANGES
@@ -374,8 +396,8 @@ class _PinningCopier:
     # before the block two allocations later, which reports the block as pinned. A source is released as soon as it is copied, which
     # frees its RAM if it is not mapped from a file.
     def __init__(self):
-        self.device = torch.cuda.current_device()
-        self.executor = ThreadPoolExecutor(max_workers=_staging_copy_threads(), thread_name_prefix="mmgp_pinning", initializer=torch.cuda.set_device, initargs=(self.device,))
+        self.device = _DEVICE_API.current_device()
+        self.executor = ThreadPoolExecutor(max_workers=_staging_copy_threads(), thread_name_prefix="mmgp_pinning", initializer=_DEVICE_API.set_device, initargs=(self.device,))
         self.blocks = collections.OrderedDict()
         self.lock_guard = threading.Lock()
 
@@ -619,7 +641,8 @@ def _get_tensor_ref(p):
     return p.data_ptr()
 
 BIG_TENSOR_MAX_SIZE = 2**28 # 256 MB
-PIN_LOCKS_RAM = True # pinned tensors live in normal RAM locked in place once filled (cudaHostRegister, about 1 ms per 256 MB), instead of
+PIN_LOCKS_RAM = _ACTIVE_DEVICE.type != "xpu" # XPU: use torch pinned memory; custom registration requires CUDA runtime.
+                     # pinned tensors live in normal RAM locked in place once filled (cudaHostRegister, about 1 ms per 256 MB), instead of
                      # pinned memory allocated by the CUDA driver (cudaHostAlloc, used if False: tens of ms per 256 MB, or seconds per GB)
 
 class _HostRegistration:
@@ -635,7 +658,7 @@ class _HostRegistration:
         with self.guard:
             if self.registered:
                 raise RuntimeError("Host memory is already registered")
-            error = torch.cuda.cudart().cudaHostRegister(self.pointer, self.size, 0)
+            error = _DEVICE_API.cudart().cudaHostRegister(self.pointer, self.size, 0)
             if int(error) == 0:
                 self.registered = True
                 with _pinned_bytes_lock:
@@ -652,9 +675,9 @@ class _HostRegistration:
             try:
                 if self.is_finalizing():
                     raise RuntimeError("Python is shutting down")
-                with torch.cuda.device(self.device):
-                    torch.cuda.synchronize(self.device)
-                    error = torch.cuda.cudart().cudaHostUnregister(self.pointer)
+                with _DEVICE_API.device(self.device):
+                    _DEVICE_API.synchronize(self.device)
+                    error = _DEVICE_API.cudart().cudaHostUnregister(self.pointer)
                     if int(error) != 0:
                         raise RuntimeError(f"cudaHostUnregister returned {error}")
             except Exception as error:
@@ -758,6 +781,7 @@ class _PinnedStager:
     def __init__(self):
         self.slots, self.events, self.slot_no, self.checked_classes, self.enabled, self.helpers = [None, None], [None, None], 0, {}, True, None
         self.copy_threads = _staging_copy_threads()
+        self.xpu_direct_logged = False
 
     def _memmove(self, dst, src, nbytes, parallel, read_job=None, read_position=0):
         copy = ctypes.memmove if read_job is None else functools.partial(_read_ahead_copy, read_job, read_position, src)
@@ -800,7 +824,7 @@ class _PinnedStager:
         return self.slots[slot_no]
 
     def _release(self):
-        self.events[self.slot_no] = torch.cuda.Event()
+        self.events[self.slot_no] = _DEVICE_API.Event()
         self.events[self.slot_no].record()
 
     def _pinned_copy(self, t, slot, offset, parallel):
@@ -817,19 +841,27 @@ class _PinnedStager:
 
     def to_gpu(self, p, parallel=lambda: True, read_job=None, read_position=0):
         t = p.data if type(p) is torch.nn.Parameter else p
+        if _ACTIVE_DEVICE.type == "xpu":
+            # XPU: bypass MMGP's CUDA-oriented pinned staging path. Intel's
+            # runtime can reject these pinned wrapper transfers despite ample
+            # device memory; direct synchronous copies are the safe fallback.
+            if not self.xpu_direct_logged:
+                self.xpu_direct_logged = True
+                print("[MMGP][XPU] Using direct synchronous weight transfers; pinned staging is bypassed.")
+            return p.to(_ACTIVE_DEVICE, non_blocking=False)
         if not self.enabled:
-            return p.to("cuda", non_blocking=True)
+            return p.to(_ACTIVE_DEVICE, non_blocking=True)
         if type(t) is torch.Tensor:
             nbytes = t.numel() * t.element_size()
             if nbytes < STAGING_MIN_SIZE or not t.is_contiguous() or t.is_pinned():
-                return p.to("cuda", non_blocking=True)
-            dst = torch.empty(t.shape, dtype=t.dtype, device="cuda")
+                return p.to(_ACTIVE_DEVICE, non_blocking=True)
+            dst = torch.empty(t.shape, dtype=t.dtype, device=_ACTIVE_DEVICE)
             dst_bytes = dst.reshape(-1).view(torch.uint8)
             for offset in range(0, nbytes, STAGING_CHUNK_SIZE):
                 length = min(STAGING_CHUNK_SIZE, nbytes - offset)
                 slot = self._acquire(length)
                 if slot is None:
-                    return p.to("cuda", non_blocking=True)
+                    return p.to(_ACTIVE_DEVICE, non_blocking=True)
                 self._memmove(slot.data_ptr(), t.data_ptr() + offset, length, parallel, read_job, read_position + offset)
                 dst_bytes[offset:offset + length].copy_(slot[:length], non_blocking=True)
                 self._release()
@@ -837,14 +869,14 @@ class _PinnedStager:
         leaves = _staging_leaves(t)
         cls = type(t)
         if leaves is None or self.checked_classes.get(cls) is False or builtins.all(leaf.is_pinned() for leaf in leaves):
-            return p.to("cuda", non_blocking=True)
+            return p.to(_ACTIVE_DEVICE, non_blocking=True)
         nbytes = sum(_staging_nbytes(leaf) for leaf in leaves)
         if nbytes < STAGING_MIN_SIZE or nbytes > STAGING_MAX_SIZE:
-            return p.to("cuda", non_blocking=True)
+            return p.to(_ACTIVE_DEVICE, non_blocking=True)
         slot = self._acquire(nbytes)
         if slot is None:
-            return p.to("cuda", non_blocking=True)
-        q = self._pinned_copy(t, slot, 0, parallel)[0].to("cuda", non_blocking=True)
+            return p.to(_ACTIVE_DEVICE, non_blocking=True)
+        q = self._pinned_copy(t, slot, 0, parallel)[0].to(_ACTIVE_DEVICE, non_blocking=True)
         self._release()
         return self.checked(p, q)
 
@@ -855,12 +887,12 @@ class _PinnedStager:
         if cls is torch.Tensor or same:
             return q
         if same is None:
-            q_ref = p.to("cuda", non_blocking=True)
+            q_ref = p.to(_ACTIVE_DEVICE, non_blocking=True)
             same = self.checked_classes[cls] = _same_moved_tensor(q, q_ref)
             if not same:
                 print(f"Staged transfers are disabled for tensors of type '{cls.__name__}' as they do not match a direct copy")
                 return q_ref
-        return q if same else p.to("cuda", non_blocking=True)
+        return q if same else p.to(_ACTIVE_DEVICE, non_blocking=True)
 
 
 CACHED_BLOCK_VIEWS = True # swapped blocks move into fixed VRAM slots whose tensor views are built once per block and slot
@@ -924,8 +956,8 @@ class _StagingRing:
         self.cond = threading.Condition()
         self.jobs = collections.OrderedDict() # entry name -> future of (region, parameters, layout), in block order
         self.cancelled = False
-        device = torch.cuda.current_device()
-        self.copier = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mmgp_ring", initializer=torch.cuda.set_device, initargs=(device,))
+        device = _DEVICE_API.current_device()
+        self.copier = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mmgp_ring", initializer=_DEVICE_API.set_device, initargs=(device,))
         self.helpers = ThreadPoolExecutor(max_workers=RING_COPY_THREADS, thread_name_prefix="mmgp_ring_copy")
         with torch.inference_mode(False):
             self.buffer = torch.empty(size, dtype=torch.uint8, device="cpu")
@@ -934,7 +966,7 @@ class _StagingRing:
         try:
             error = self.copier.submit(self.registration.register).result()
             if int(error) != 0:
-                raise RuntimeError(torch.cuda.cudart().cudaGetErrorString(error))
+                raise RuntimeError(_DEVICE_API.cudart().cudaGetErrorString(error))
         except BaseException:
             self.copier.shutdown()
             self.helpers.shutdown()
@@ -1006,7 +1038,7 @@ class _StagingRing:
             name, future = self.jobs.popitem(last=False)
             if name == entry_name:
                 return future.result()
-            self.release(future.result()[0], torch.cuda.Event()) # an event never recorded counts as completed
+            self.release(future.result()[0], _DEVICE_API.Event()) # an event never recorded counts as completed
 
     def release(self, region, transfer):
         with self.cond:
@@ -1194,7 +1226,7 @@ def _pin_sd_to_memory(sd, sd_name, tied_weights = None, gig_tensor_size = BIG_TE
     # global total_pinned_bytes
     # total_pinned_bytes += total
     gc.collect()
-    torch.cuda.empty_cache()
+    _empty_cache_device()
 
 
     if verboseLevel >=1:
@@ -1775,7 +1807,7 @@ def _quantize(model_to_quantize, weights=qint8, verboseLevel = 1, threshold = 2*
 
 
     freeze(model_to_quantize)
-    torch.cuda.empty_cache()
+    _empty_cache_device()
     gc.collect()       
 
     for tied_module, (tied_weight, src_module, src_weight) in tied_weights.items():  
@@ -2544,16 +2576,16 @@ def fast_load_transformers_model(model_path: str,  do_quantize = False, quantiza
 
 def flush_torch_caches():
     gc.collect()
-    if torch.cuda.is_available():
+    if _DEVICE_API.is_available():
         try:
-            torch.cuda.synchronize()
-        except torch.cuda.CudaError:
+            _synchronize_device()
+        except RuntimeError: # XPU: torch.xpu has no CudaError type
             pass
-        # for idx in range(torch.cuda.device_count()):
-        #     with torch.cuda.device(idx):
-        torch.cuda.empty_cache()
-        # torch.cuda.ipc_collect()
-        # torch.cuda.reset_peak_memory_stats()
+        # for idx in range(_DEVICE_API.device_count()):
+        #     with _DEVICE_API.device(idx):
+        _empty_cache_device()
+        # _DEVICE_API.ipc_collect()
+        # _DEVICE_API.reset_peak_memory_stats()
     try:
         torch._C._host_emptyCache()
     except AttributeError:
@@ -2581,9 +2613,9 @@ def flush_torch_caches():
             pass
         dummy_tensor = None    
 
-    if torch.cuda.is_available():
+    if _DEVICE_API.is_available():
         gc.collect()
-        torch.cuda.empty_cache()
+        _empty_cache_device()
 
 
 def map_state_dict(state_dict, rules):
@@ -3308,14 +3340,14 @@ class offload:
         self.blocks_of_modules = {}
         self.blocks_of_modules_sizes = {}
         self.anyCompiledModule = False
-        self.device_mem_capacity = torch.cuda.get_device_properties(0).total_memory
+        self.device_mem_capacity = _DEVICE_API.get_device_properties(0).total_memory
         self.last_reserved_mem_check =0
         self.loaded_blocks = {}
         self.prev_blocks_names = {}
         self.next_blocks_names = {}
         self.preloaded_blocks_per_model = {}
-        self.default_stream = torch.cuda.default_stream(torch.device("cuda")) # torch.cuda.current_stream()
-        self.transfer_stream = torch.cuda.Stream()
+        self.default_stream = (_DEVICE_API.default_stream(_ACTIVE_DEVICE) if _ACTIVE_DEVICE.type == "cuda" else _DEVICE_API.current_stream()) # XPU: torch.xpu exposes current_stream, not default_stream.
+        self.transfer_stream = _DEVICE_API.Stream()
         self.async_transfers = False
         self.parameters_ref  = {}
         self.max_reservable_memory = 0
@@ -3425,7 +3457,7 @@ class offload:
 
     def submit_prefetch(self, entry_name, fn, *args):
         if self.prefetch_executor is None:
-            self.prefetch_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mmgp_prefetch", initializer=torch.cuda.set_device, initargs=(torch.cuda.current_device(),))
+            self.prefetch_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mmgp_prefetch", initializer=_DEVICE_API.set_device, initargs=(_DEVICE_API.current_device(),))
         self.prefetch_futures[entry_name] = self.prefetch_executor.submit(_run_in_grad_modes, torch.is_inference_mode_enabled(), torch.is_grad_enabled(), fn, *args)
 
     def wait_prefetch(self, entry_name=None):
@@ -3444,10 +3476,10 @@ class offload:
         # The blocks that are not pinned are copied further ahead into the staging ring, if any.
         if self.ring is not None:
             self._schedule_ring(entry_name)
-        consumer = torch.cuda.current_stream()
+        consumer = _DEVICE_API.current_stream()
         if entry_name in self.inflight:
             transfer = self.inflight.pop(entry_name)
-            consumer.wait_event(transfer if isinstance(transfer, torch.cuda.Event) else transfer.result())
+            consumer.wait_event(transfer if isinstance(transfer, _DEVICE_API.Event) else transfer.result())
             self._ensure_loras(model_id, entry_name)
         else:
             self._transfer(consumer, entry_name, cpu_to_gpu)
@@ -3474,7 +3506,7 @@ class offload:
         cpu_to_gpu(stream, self.blocks_of_modules[entry_name], moved=moved)
         if staged is None:
             return stream.record_event()
-        event = torch.cuda.Event(blocking=True) # the copier thread sleeps while it waits for the region to be free
+        event = _DEVICE_API.Event(blocking=True) # the copier thread sleeps while it waits for the region to be free
         event.record(stream)
         self.ring.release(staged[0], event)
         return event
@@ -3490,8 +3522,8 @@ class offload:
         else:
             region, items, (_, offsets, nbytes) = staged
         slot = self._take_slot(entry_name, nbytes) if CACHED_BLOCK_VIEWS else None
-        with torch.cuda.stream(stream):
-            buffer = torch.empty(nbytes, dtype=torch.uint8, device="cuda") if slot is None else self.block_slots[entry_name.split("/", 1)[0]][slot][0]
+        with _DEVICE_API.stream(stream):
+            buffer = torch.empty(nbytes, dtype=torch.uint8, device=_ACTIVE_DEVICE) if slot is None else self.block_slots[entry_name.split("/", 1)[0]][slot][0]
             if staged is None:
                 for offset, source in sources:
                     buffer[offset:offset + source.numel()].copy_(source, non_blocking=True)
@@ -3527,8 +3559,8 @@ class offload:
                 if slot[0] is None:
                     # in the pool of the block buffers, whose memory it can then reuse; not an inference tensor, as blocks are also loaded
                     # outside inference mode
-                    with torch.inference_mode(False), torch.cuda.stream(self.transfer_stream):
-                        slot[0] = torch.empty(slot[2], dtype=torch.uint8, device="cuda")
+                    with torch.inference_mode(False), _DEVICE_API.stream(self.transfer_stream):
+                        slot[0] = torch.empty(slot[2], dtype=torch.uint8, device=_ACTIVE_DEVICE)
                 slot[1] = entry_name
                 return slot_no
         return None
@@ -3719,7 +3751,7 @@ class offload:
                 ref = _get_tensor_ref(item)
                 moved = tensor_cache.get(ref, None)
                 if moved is None:
-                    moved = item.cuda(non_blocking=True)
+                    moved = item.to(_ACTIVE_DEVICE, non_blocking=True)
                     tensor_cache[ref] = moved
                 return moved
             return item
@@ -3777,7 +3809,7 @@ class offload:
             else:
                 loras_model_data =  getattr(model, "_loras_model_data", None)
 
-            with torch.cuda.stream(stream_to_use):
+            with _DEVICE_API.stream(stream_to_use):
                 read_position = 0
                 for i, param in enumerate(blocks_params):
                     parent_module, n, p, is_buffer, tied_param = param
@@ -3785,7 +3817,7 @@ class offload:
 
                     if tied_param != None:
                         tied_p = getattr( tied_param[0], tied_param[1]) 
-                        if tied_p.is_cuda:
+                        if tied_p.device.type == _ACTIVE_DEVICE.type:
                             _install_tensor(parent_module, n , tied_p)
                             continue
                     # if hasattr(p,'_data'):
@@ -3840,7 +3872,7 @@ class offload:
             if self.async_transfers:
                 # The block may still be read by queued compute. Its memory, mostly allocated on the transfer stream, is then reused or
                 # released in that stream's order: the stream waits for the compute queued so far, the GPU and not the host.
-                self.transfer_stream.wait_stream(torch.cuda.current_stream())
+                self.transfer_stream.wait_stream(_DEVICE_API.current_stream())
             self.gpu_unload_blocks(model_id, loaded_block)
             if self.ready_to_check_mem():
                 self.empty_cache_if_needed()
@@ -3869,9 +3901,9 @@ class offload:
                         print(f"Preloading model {entry_name} ({model_name}) in GPU")
                     else:
                         print(f"Loading model {entry_name} ({model_name}) in GPU")
-                cpu_to_gpu(torch.cuda.current_stream(), self.blocks_of_modules[entry_name])
+                cpu_to_gpu(_DEVICE_API.current_stream(), self.blocks_of_modules[entry_name])
 
-            torch.cuda.synchronize()
+            _synchronize_device()
             if not first:
                 self._ensure_loras(model_id, entry_name)
 
@@ -3887,7 +3919,7 @@ class offload:
             if self.verboseLevel >=2:
                 print(f"Loading model {entry_name} ({model_name}) in GPU")
             cpu_to_gpu(self.default_stream, self.blocks_of_modules[entry_name])
-            torch.cuda.synchronize()
+            _synchronize_device()
         if not preload:
             self.loaded_blocks[model_id] = blocks_name           
 
@@ -3966,7 +3998,7 @@ class offload:
             self.read_ahead.reset()
             self.read_jobs.clear()
             self.read_plans.clear()
-        torch.cuda.synchronize() # blocks may still be read or written by queued work
+        _synchronize_device() # blocks may still be read or written by queued work
         if self.ring is not None:
             self.ring.reset()
         for model_id in self.active_models_ids:
@@ -3995,7 +4027,7 @@ class offload:
         self.slot_views = {key: views for key, views in self.slot_views.items() if key[0].split("/", 1)[0] in self.block_slots}
         self.active_models_ids = [model_id for model_id in self.active_models_ids if model_id in keep]
         self.active_models = [self.models[model_id] for model_id in self.active_models_ids]
-        torch.cuda.empty_cache()
+        _empty_cache_device()
         gc.collect()
         self.last_reserved_mem_check = time.time()
 
@@ -4006,17 +4038,17 @@ class offload:
         for arg in args:
             if torch.is_tensor(arg):    
                 if arg.dtype == torch.float32:
-                    arg = arg.to(dtype).cuda(non_blocking=True)
-                elif not arg.is_cuda:
-                    arg = arg.cuda(non_blocking=True)
+                    arg = arg.to(dtype=dtype, device=_ACTIVE_DEVICE, non_blocking=True)
+                elif arg.device.type != _ACTIVE_DEVICE.type:
+                    arg = arg.to(_ACTIVE_DEVICE, non_blocking=True)
             new_args.append(arg)
         for k in kwargs:
             arg = kwargs[k]
             if torch.is_tensor(arg):
                 if arg.dtype == torch.float32:
-                    arg = arg.to(dtype).cuda(non_blocking=True)             
-                elif not arg.is_cuda:
-                    arg = arg.cuda(non_blocking=True)             
+                    arg = arg.to(dtype=dtype, device=_ACTIVE_DEVICE, non_blocking=True)
+                elif arg.device.type != _ACTIVE_DEVICE.type:
+                    arg = arg.to(_ACTIVE_DEVICE, non_blocking=True)
             new_kwargs[k]= arg
         
         return new_args, new_kwargs
@@ -4033,17 +4065,17 @@ class offload:
 
 
     def empty_cache_if_needed(self):
-        mem_reserved = torch.cuda.memory_reserved()
+        mem_reserved = _DEVICE_API.memory_reserved()
         mem_threshold = 0.9*self.device_mem_capacity
         if mem_reserved >= mem_threshold:            
-            mem_allocated = torch.cuda.memory_allocated()
+            mem_allocated = _DEVICE_API.memory_allocated()
             if mem_allocated <= 0.70 * mem_reserved: 
                 # print(f"Cuda empty cache triggered as Allocated Memory ({mem_allocated/1024000:0f} MB) is lot less than Cached Memory ({mem_reserved/1024000:0f} MB)  ")
-                torch.cuda.empty_cache()
+                _empty_cache_device()
                 tm= time.time()
                 if self.verboseLevel >=2:
                     print(f"Empty Cuda cache at {tm}")
-                # print(f"New cached memory after purge is {torch.cuda.memory_reserved()/1024000:0f} MB)  ")
+                # print(f"New cached memory after purge is {_DEVICE_API.memory_reserved()/1024000:0f} MB)  ")
 
 
     def any_param_or_buffer(self, target_module: torch.nn.Module):
@@ -4369,6 +4401,11 @@ class offload:
         return functools.update_wrapper(functools.partial(target_fn, submodule), old_forward)
 
     def ensure_model_loaded(self, model_id):
+        if xpu_runtime_unsafe():
+            raise RuntimeError(
+                "The Intel XPU runtime is still recovering from an earlier failed command. "
+                "Restart Maestro before starting another generation."
+            )
         if model_id in self.active_models_ids:
             return
         # new_model_id = getattr(module, "_mm_id") 
@@ -4667,7 +4704,7 @@ def {fname}(module, *args, **kwargs):
             last_offload_obj = None
 
         gc.collect()
-        torch.cuda.empty_cache()
+        _empty_cache_device()
 
 
 
@@ -4797,7 +4834,8 @@ def _configure(self, pipe_or_dict_of_modules, pinnedMemory = False, pinnedPEFTLo
         else:
             budget = get_parsed_budget(budgets) 
 
-    self.async_transfers = asyncTransfers
+    self.async_transfers = asyncTransfers and _ACTIVE_DEVICE.type != "xpu" # XPU: ring transfer registration uses CUDA runtime
+    asyncTransfers = self.async_transfers
     self.prefetch_window = prefetchWindow
     self.read_ahead_enabled = readAhead
     from . import allocator as vram_allocator
@@ -4818,7 +4856,7 @@ def _configure(self, pipe_or_dict_of_modules, pinnedMemory = False, pinnedPEFTLo
     ignored_models = getattr(pipe_or_dict_of_modules, "_mmgp_ignore_models", ())
     if hasattr(pipe_or_dict_of_modules, "components"):
         # create a fake Accelerate parameter so that lora loading doesn't change the device
-        pipe_or_dict_of_modules.hf_device_map = torch.device("cuda")
+        pipe_or_dict_of_modules.hf_device_map = _ACTIVE_DEVICE
         pipe_or_dict_of_modules= pipe_or_dict_of_modules.components 
 
     
@@ -4974,7 +5012,7 @@ def _configure(self, pipe_or_dict_of_modules, pinnedMemory = False, pinnedPEFTLo
         if loading_callback is not None: loading_callback.check_abort()
         current_model: torch.nn.Module = models[model_id] 
         externally_managed = excluded_names(current_model)
-        current_model._force_device= "cuda"
+        current_model._force_device = _ACTIVE_DEVICE # XPU: keep hooked model.device aligned with the selected backend.
         towers_names, towers_modules = _detect_main_towers(current_model)
         compilationInThisOne = compileAllModels or model_id in modelsToCompile
 
@@ -5116,8 +5154,8 @@ def _configure(self, pipe_or_dict_of_modules, pinnedMemory = False, pinnedPEFTLo
         elif self.ring is None and smartPinning is None and builtins.any(listed[entry.split("/", 1)[0]] for entry in unpinned):
             self._create_ring(max(self._block_items(entry)[1][2] for entry in unpinned), max_reservable_memory, verboseLevel)
     if loading_callback is not None: loading_callback.report("Finalization", phase_total, phase_total, "")
-    torch.set_default_device('cuda')
-    torch.cuda.empty_cache()
+    torch.set_default_device(_ACTIVE_DEVICE) # XPU: make implicit allocations follow selected device
+    _empty_cache_device()
     gc.collect()         
 
     return self

@@ -12,11 +12,10 @@ Design notes:
     cadence each reading is a smooth trailing average over that window.
     We prime it once at import so the first real reading is meaningful
     rather than 0.0.
-  - GPU goes through NVML (``pynvml``) — the same path stats.py uses —
-    which reports *device-wide* VRAM (all processes), i.e. what a
-    hardware monitor should show. NVIDIA only; on any other vendor /
-    when NVML is unavailable we return ``available: False`` and the UI
-    simply hides the GPU gauges.
+  - NVIDIA GPU telemetry goes through NVML (``pynvml``), which reports
+    device-wide utilization and VRAM. XPU: Intel telemetry uses PyTorch's
+    device name, capacity, and process memory counters; utilization is
+    not exposed by this endpoint for XPU.
   - Every metric is wrapped in try/except so a transient driver hiccup
     degrades one number to 0 instead of failing the whole poll.
 """
@@ -65,19 +64,57 @@ def get_live_stats() -> dict:
     # ---- GPU (NVIDIA / NVML) -----------------------------------------
     gpu_available = False
     gpu_percent = vram_used_gb = vram_total_gb = vram_percent = 0.0
+    gpu_backend = "none"
+    gpu_name = ""
+    gpu_utilization_available = False
     if _nvml_ok and pynvml is not None:
         try:
             handle = pynvml.nvmlDeviceGetHandleByIndex(0)  # GPU 0
             util = pynvml.nvmlDeviceGetUtilizationRates(handle)
             mem = pynvml.nvmlDeviceGetMemoryInfo(handle)
+            name = pynvml.nvmlDeviceGetName(handle)
+            if isinstance(name, bytes):
+                name = name.decode("utf-8", errors="replace")
+            gpu_name = str(name or "")
             gpu_percent = float(util.gpu)
             vram_used_gb = mem.used / (1024 ** 3)
             vram_total_gb = mem.total / (1024 ** 3)
             vram_percent = (mem.used / mem.total) * 100.0 if mem.total else 0.0
             gpu_available = True
+            gpu_backend = "cuda"
+            gpu_utilization_available = True
         except Exception:
             # GPU asleep / driver transient — report unavailable this tick.
             gpu_available = False
+
+    # XPU: PyTorch reports the selected Intel device and this process's
+    # reserved memory. Keep this as a fallback so NVIDIA/NVML behavior is
+    # unchanged when an NVIDIA GPU is present.
+    if not gpu_available:
+        try:
+            import torch
+
+            xpu = getattr(torch, "xpu", None)
+            if xpu is not None and xpu.is_available():
+                props = xpu.get_device_properties(0)
+                try:
+                    memory_used = max(
+                        xpu.memory_reserved(0), xpu.memory_allocated(0)
+                    )
+                except Exception:
+                    memory_used = xpu.memory_allocated(0)
+                vram_used_gb = memory_used / (1024 ** 3)
+                vram_total_gb = props.total_memory / (1024 ** 3)
+                vram_percent = (
+                    (memory_used / props.total_memory) * 100.0
+                    if props.total_memory else 0.0
+                )
+                gpu_name = str(xpu.get_device_name(0) or "")
+                gpu_available = True
+                gpu_backend = "xpu"
+        except Exception:
+            # Keep the CPU/RAM snapshot usable if XPU telemetry is unavailable.
+            pass
 
     # Report the same device's compute activity and memory usage. Windows'
     # 3D-engine counter includes graphics work across adapters and samples
@@ -97,6 +134,9 @@ def get_live_stats() -> dict:
         },
         "gpu": {
             "available": gpu_available,
+            "backend": gpu_backend,
+            "name": gpu_name,
+            "utilization_available": gpu_utilization_available,
             "percent": round(gpu_percent, 1),
             "compute_percent": round(gpu_compute_percent, 1),
             "vram_used_gb": round(vram_used_gb, 2),

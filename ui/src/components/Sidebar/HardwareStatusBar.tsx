@@ -109,6 +109,7 @@ export function HardwareStatusBar() {
     return () => clearInterval(id)
   }, [visible, loadSystemStats])
 
+  // XPU: include the selected Intel device name and skip unsupported utilization.
   const gpu = stats?.gpu
   const ram = stats?.ram
   const cpu = stats?.cpu
@@ -134,10 +135,14 @@ export function HardwareStatusBar() {
         {gpu?.available && (
           <span
             className="flex items-center gap-1 shrink-0 text-text-secondary"
-            title={`GPU compute ${gpu.percent.toFixed(0)}% (NVIDIA) · VRAM ${fmtGb(gpu.vram_used_gb, gpu.vram_total_gb)}`}
+            title={gpu.backend === 'xpu'
+              ? `XPU · ${gpu.name || 'Intel Arc GPU'} · PyTorch VRAM ${fmtGb(gpu.vram_used_gb, gpu.vram_total_gb)}`
+              : `GPU compute ${gpu.percent.toFixed(0)}% (NVIDIA) · VRAM ${fmtGb(gpu.vram_used_gb, gpu.vram_total_gb)}`}
           >
             <Zap size={11} className="text-text-muted" />
-            <span className="tabular-nums">{gpu.percent.toFixed(0)}%</span>
+            {gpu.utilization_available !== false && (
+              <span className="tabular-nums">{gpu.percent.toFixed(0)}%</span>
+            )}
             <span className={`tabular-nums ${fullnessText(gpu.vram_percent)}`}>{fmtG(gpu.vram_used_gb)}</span>
           </span>
         )}
@@ -177,17 +182,25 @@ export function HardwareStatusBar() {
       <div className="flex flex-col gap-1">
         {gpu?.available ? (
           <>
-            <Gauge label="GPU" percent={gpu.percent} value={`${gpu.percent.toFixed(0)}%`} fill="bg-accent-blue"
-              title="GPU compute activity (NVIDIA, as reported by nvidia-smi)" />
+            {gpu.backend === 'xpu' && (
+              <div className="text-[10px] text-text-secondary truncate" title={gpu.name || 'Intel Arc GPU'}>
+                XPU · {gpu.name || 'Intel Arc GPU'}
+              </div>
+            )}
+            {gpu.utilization_available !== false && (
+              <Gauge label="GPU" percent={gpu.percent} value={`${gpu.percent.toFixed(0)}%`} fill="bg-accent-blue"
+                title="GPU compute activity (NVIDIA, as reported by nvidia-smi)" />
+            )}
             <Gauge
               label="VRAM"
               percent={gpu.vram_percent}
               value={fmtGb(gpu.vram_used_gb, gpu.vram_total_gb)}
               fill={fullnessColor(gpu.vram_percent)}
+              title={gpu.backend === 'xpu' ? 'PyTorch VRAM reserved by Maestro on this Intel XPU' : undefined}
             />
           </>
         ) : (
-          <div className="text-[10px] text-text-muted">No NVIDIA GPU detected</div>
+          <div className="text-[10px] text-text-muted">No supported GPU detected</div>
         )}
         <Gauge label="CPU" percent={cpu?.percent ?? 0} value={`${(cpu?.percent ?? 0).toFixed(0)}%`} fill="bg-accent-blue" />
         <Gauge label="RAM" percent={ram?.percent ?? 0} value={fmtGb(ram?.used_gb, ram?.total_gb)} fill={fullnessColor(ram?.percent ?? 0)} />

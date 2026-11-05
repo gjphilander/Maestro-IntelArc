@@ -30,6 +30,15 @@ import mmgp
 from mmgp import offload, safetensors2, profile_type , quant_router
 from functools import partial
 from shared.utils.default_device import call_with_default_device
+from shared.device import (
+    empty_cache as empty_device_cache,
+    get_device_properties,
+    is_xpu_runtime_failure,
+    mark_xpu_runtime_unsafe,
+    resolve_device,
+    synchronize as synchronize_device,
+    xpu_runtime_unsafe,
+)
 from shared.utils.power_throttling import prevent_power_throttling
 try:
     import triton
@@ -98,7 +107,13 @@ from shared.llm_engines.nanovllm.vllm_support import resolve_lm_decoder_engine
 from shared import model_dropdowns
 from collections import defaultdict
 from services.job_lifecycle import call_with_sticky_interrupt
-from services.generation_memory import classify_memory_error, cleanup_failed_generation, log_generation_memory, release_auxiliary_models
+from services.generation_memory import (
+    classify_memory_error,
+    cleanup_failed_generation,
+    log_generation_memory,
+    release_auxiliary_models,
+    write_xpu_failure_report,
+)
 
 # import torch._dynamo as dynamo
 # dynamo.config.recompile_limit = 2000   # default is 256
@@ -226,13 +241,17 @@ def release_model():
 
 def release_generation_memory():
     """Run only after the failed generation has relinquished its tensors."""
+    if active_device.type == "xpu" and xpu_runtime_unsafe():
+        # XPU: A Level Zero runtime failure can poison the context. Keep the
+        # process alive for graceful shutdown instead of touching that device.
+        gc.collect()
+        return
     try:
         release_model()
     finally:
         release_auxiliary_models()
         gc.collect()
-        if torch.cuda.is_available():
-            torch.cuda.empty_cache()
+        empty_device_cache()
 
 def get_unique_id():
     global unique_id  
@@ -2640,8 +2659,16 @@ override_attention_modes_supported = get_supported_override_attention_modes()
 args = _parse_args()
 migrate_loras_layout()
 
-gpu_major, gpu_minor = torch.cuda.get_device_capability(args.gpu if len(args.gpu) > 0 else None)
-if  gpu_major < 8:
+active_device = resolve_device()
+if not args.gpu:
+    args.gpu = str(active_device)
+if active_device.type == "cuda":
+    gpu_major, gpu_minor = torch.cuda.get_device_capability(args.gpu)
+else:
+    # XPU: CUDA compute capability is not defined for Intel GPUs. Keep the
+    # BF16-capable path enabled and let the XPU kernels validate themselves.
+    gpu_major, gpu_minor = (8, 0) if active_device.type == "xpu" else (0, 0)
+if gpu_major < 8:
     print("Switching to FP16 models when possible as GPU architecture doesn't support optimed BF16 Kernels")
     bfloat16_supported = False
 else:
@@ -2650,7 +2677,7 @@ else:
 args.flow_reverse = True
 processing_device = args.gpu
 if len(processing_device) == 0:
-    processing_device ="cuda"
+    processing_device = str(active_device)
 # torch.backends.cuda.matmul.allow_fp16_accumulation = True
 lock_ui_attention = False
 lock_ui_transformer = False
@@ -4582,6 +4609,14 @@ def load_models(model_type, override_profile = -1, output_type="video", preview_
             )
     except Exception as exc:
         print(f"[MiniMax H3 Memory] Automatic reserved-RAM sizing skipped: {exc}")
+    # XPU: Keep host RAM available for Level Zero transfers on low-RAM systems.
+    # Auto-tune is capped later too; explicit user settings still take priority.
+    xpu_default_reserved_ram = False
+    if active_device.type == "xpu" and perc_reserved_mem_max <= 0:
+        reserved_override = float(os.environ.get("perc_reserved_mem_max", 0) or 0)
+        if reserved_override <= 0:
+            xpu_default_reserved_ram = True
+            perc_reserved_mem_max = 0.20
     vram_safety_coefficient = args.vram_safety_coefficient 
     model_file_list = [model_filename]
     model_type_list = [model_type]
@@ -4751,7 +4786,15 @@ def load_models(model_type, override_profile = -1, output_type="video", preview_
             print(f"[Memory] Dynamic preload cannot apply to Profile {profile}; its normal budgets apply.")
     from services.memory_settings import per_job_memory_options
     job_options = per_job_memory_options(args, output_type)
-    kwargs["perc_reserved_mem_max"] = job_options.get("reserved_ram_fraction", perc_reserved_mem_max)
+    effective_reserved_ram = job_options.get("reserved_ram_fraction", perc_reserved_mem_max)
+    if xpu_default_reserved_ram:
+        effective_reserved_ram = min(effective_reserved_ram, 0.20)
+        print(
+            f"[XPU] Effective reserved RAM ceiling: "
+            f"{effective_reserved_ram:.0%} (Auto-tune capped at 20% by default). "
+            "Override with System Settings → Reserved RAM or perc_reserved_mem_max."
+        )
+    kwargs["perc_reserved_mem_max"] = effective_reserved_ram
     if server_config.get("enhancer_mode", 1) == 0:
         setup_prompt_enhancer(pipe, kwargs)
     loras_transformer = kwargs.pop("loras", [])
@@ -6117,7 +6160,7 @@ def extract_faces_from_video_with_mask(input_video_path, input_mask_path, max_fr
 
     face_processor = None
     gc.collect()
-    torch.cuda.empty_cache()
+    empty_device_cache()
 
     face_tensor= torch.tensor(np.stack(face_list, dtype= np.float32) / 127.5 - 1).permute(-1, 0, 1, 2 ) # t h w c -> c t h w
     if pad_frames > 0:
@@ -6330,7 +6373,7 @@ def preprocess_video_with_mask(pre_video_guide, input_video_path, input_mask_pat
     preproc = None
     preproc_outside = None
     gc.collect()
-    torch.cuda.empty_cache()
+    empty_device_cache()
     if pad_frames > 0:
         masked_frames = masked_frames[0] * pad_frames + masked_frames
         if any_mask: masked_frames = masks[0] * pad_frames + masks
@@ -6542,7 +6585,7 @@ def set_seed(seed):
     import random
     seed = random.randint(0, 999999999) if seed == None or seed < 0 else seed
     torch.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
+    torch.manual_seed(seed)
     np.random.seed(seed)
     random.seed(seed)
     torch.backends.cudnn.deterministic = True
@@ -8007,6 +8050,13 @@ def generate_video(
 
     global wan_model, offloadobj, reload_needed, _last_vae_upsampling
     gen = get_gen_info(state)
+    if active_device.type == "xpu" and xpu_runtime_unsafe():
+        send_cmd(
+            "error",
+            "The Intel XPU runtime failed during an earlier generation. "
+            "Restart Maestro before starting another generation.",
+        )
+        return False
     if gen.get("abort", False):
         return False
     # Head splitting is a generation-boundary setting. Editing settings while
@@ -8463,7 +8513,7 @@ def generate_video(
         perturbation_layers = None
 
     offload.shared_state["_attention"] =  attn
-    device_mem_capacity = torch.cuda.get_device_properties(0).total_memory / 1048576
+    device_mem_capacity = get_device_properties(0).total_memory / 1048576
     if  hasattr(wan_model, "vae") and hasattr(wan_model.vae, "get_VAE_tile_size"):
         get_tile_size = wan_model.vae.get_VAE_tile_size
         try:
@@ -8704,7 +8754,7 @@ def generate_video(
 
     current_video_length = video_length
     # VAE Tiling
-    device_mem_capacity = torch.cuda.get_device_properties(None).total_memory / 1048576
+    device_mem_capacity = get_device_properties().total_memory / 1048576
     guide_inpaint_color = model_def.get("guide_inpaint_color", 127.5)
     if image_mode==2:
         guide_inpaint_color = model_def.get("inpaint_color", guide_inpaint_color)
@@ -9024,10 +9074,10 @@ def generate_video(
                     os.remove(temp_path)
             except Exception:
                 pass
-        if torch.cuda.is_available():
-            torch.cuda.synchronize()
+        if active_device.type in ("cuda", "xpu"):
+            synchronize_device()
             gc.collect()
-            torch.cuda.empty_cache()
+            empty_device_cache()
 
     seed = set_seed(seed)
 
@@ -9036,7 +9086,7 @@ def generate_video(
     os.makedirs(image_save_path, exist_ok=True)
     os.makedirs(audio_save_path, exist_ok=True)
     gc.collect()
-    torch.cuda.empty_cache()
+    empty_device_cache()
     if gen.get("abort", False):
         _cleanup_generation_resources()
         return False
@@ -9656,7 +9706,7 @@ def generate_video(
                             face_arc_embeds = face_arc_embeds.squeeze(0).cpu()
                             face_encoder = image_pil = None
                             gc.collect()
-                            torch.cuda.empty_cache()
+                            empty_device_cache()
 
                         if remove_background_images_ref > 0:
                             send_cmd("progress", [0, get_latest_status(state, "Removing Images References Background")])
@@ -10048,20 +10098,50 @@ def generate_video(
                     abort = True
                     break
             except Exception as e:
+                traceback_text = traceback.format_exc()
+                xpu_runtime_failed = (
+                    active_device.type == "xpu" and is_xpu_runtime_failure(e)
+                )
+                xpu_report_path = None
+                if xpu_runtime_failed:
+                    # XPU: Do not run device teardown after a fatal Level Zero
+                    # error; it can hang or replace the original failure.
+                    mark_xpu_runtime_unsafe()
+                    xpu_report_path = write_xpu_failure_report(
+                        e,
+                        traceback_text,
+                        model_def.get("name") or model_type,
+                        active_device,
+                        torch.__version__,
+                    )
+                    print(
+                        "[XPU] Level Zero runtime error detected. "
+                        "Skipping device cleanup; restart Maestro before retrying. "
+                        f"Failure report: {xpu_report_path or 'terminal output'}"
+                    )
                 crash_type = classify_memory_error(e)
-                if crash_type:
-                    log_generation_memory(torch.cuda)
+                if crash_type and not xpu_runtime_failed:
+                    log_generation_memory(torch.cuda if active_device.type == "cuda" else torch.xpu)
                 if len(control_audio_tracks) > 0 or len(source_audio_tracks) > 0:
                     cleanup_temp_audio_files(control_audio_tracks + source_audio_tracks)
                 remove_temp_filenames(temp_filenames_list)
                 clear_gen_cache()
-                if hasattr(wan_model, "release_special_loras"):
+                if not xpu_runtime_failed and hasattr(wan_model, "release_special_loras"):
                     wan_model.release_special_loras()
-                offloadobj.unload_all()
+                if not xpu_runtime_failed:
+                    try:
+                        offloadobj.unload_all()
+                    except Exception as cleanup_error:
+                        if active_device.type != "xpu":
+                            raise
+                        # XPU: a driver sync error during teardown must not hide the
+                        # generation error that caused this cleanup path.
+                        mark_xpu_runtime_unsafe()
+                        print(f"[Memory][XPU] Could not unload failed generation cleanly: {cleanup_error}")
                 trans.cache = None 
                 if trans2 is not None: 
                     trans2.cache = None 
-                if not model_def.get("external_runtime"):
+                if not xpu_runtime_failed and not model_def.get("external_runtime"):
                     offload.unload_loras_from_model(trans_lora)
                     if trans2_lora is not None:
                         offload.unload_loras_from_model(trans2_lora)
@@ -10072,10 +10152,19 @@ def generate_video(
                 #     torch._dynamo.config.cache_size_limit = cache_size
 
                 gc.collect()
-                torch.cuda.empty_cache()
+                empty_device_cache()
                 s = str(e)
                 state["prompt"] = ""
-                if crash_type == "VRAM":
+                if xpu_runtime_failed:
+                    new_error = (
+                        "Intel's Level Zero runtime reported an XPU resource failure. "
+                        "The GPU context may no longer be usable, so this generation "
+                        "was stopped without touching the device again. Close Maestro "
+                        "normally and restart it before retrying. "
+                        f"Original error: {s[:500]}. "
+                        f"Full traceback: {xpu_report_path or 'Maestro terminal output'}."
+                    )
+                elif crash_type == "VRAM":
                     if (
                         str(model_def.get("architecture") or "")
                         == "minimax_music3"
@@ -10114,17 +10203,18 @@ def generate_video(
                     )
                 else:
                     new_error =  gr.Error(f"The generation of the video has encountered an error, please check your terminal for more information. '{s}'")
-                tb = traceback.format_exc().split('\n')[:-1] 
+                tb = traceback_text.split('\n')[:-1]
                 print('\n'.join(tb))
                 send_cmd("error", new_error)
                 clear_status(state)
                 return False
             finally:
                 callback.close_preview(cancel=gen.get("abort", False))
-                try:
-                    write_vram_debug_report(save_path, model_type)
-                except Exception as debug_error:
-                    print(f"[VRAM debug] Could not write report: {debug_error}")
+                if not xpu_runtime_unsafe():
+                    try:
+                        write_vram_debug_report(save_path, model_type)
+                    except Exception as debug_error:
+                        print(f"[VRAM debug] Could not write report: {debug_error}")
             src_video = src_video2 = src_mask = src_mask2 = None
             if skip_steps_cache != None :
                 skip_steps_cache.previous_residual = None
@@ -10188,7 +10278,7 @@ def generate_video(
             clear_gen_cache()
             offloadobj.unload_all()
             gc.collect()
-            torch.cuda.empty_cache()
+            empty_device_cache()
 
             if samples == None:
                 abort = True
@@ -11248,10 +11338,10 @@ def process_tasks(state):
                 update_global_queue_ref(queue)
 
                 # Free VRAM between tasks to prevent OOM on long sequential runs
-                if torch.cuda.is_available():
-                    torch.cuda.synchronize()
+                if active_device.type in ("cuda", "xpu"):
+                    synchronize_device()
                     gc.collect()
-                    torch.cuda.empty_cache()
+                    empty_device_cache()
 
         except Exception as e:
             traceback.print_exc()

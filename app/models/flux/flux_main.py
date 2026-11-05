@@ -11,6 +11,7 @@ from .modules.layers import get_linear_split_map
 from transformers import SiglipVisionModel, SiglipImageProcessor
 import torchvision.transforms.functional as TVF
 import math
+from shared.device import resolve_device
 from shared.utils.utils import convert_image_to_tensor, convert_tensor_to_image
 from shared.utils import files_locator as fl 
 from transformers import Qwen2_5_VLForConditionalGeneration, Qwen2VLProcessor
@@ -85,7 +86,8 @@ class model_factory:
         VAE_dtype = torch.float32,
         mixed_precision_transformer = False
     ):
-        self.device = torch.device(f"cuda")
+        # XPU: use Maestro's selected accelerator; this remains CUDA on NVIDIA.
+        self.device = resolve_device()
         self._interrupt = False
         self.VAE_dtype = VAE_dtype
         self.dtype = dtype
@@ -273,7 +275,8 @@ class model_factory:
     ):
             if self._interrupt:
                 return None
-            device="cuda"
+            # XPU: torch.autocast needs the backend name, not torch.device.
+            device=self.device.type
             flux2 = self.is_flux2
             model_mode = bbargs.get("model_mode", None)
             model_mode_int = None
@@ -316,8 +319,9 @@ class model_factory:
                     input_ref_images = [convert_tensor_to_image(input_frames) ] + (input_ref_images or [])
                 
                 shape = (batch_size, 128, height // 16, width // 16)
-                generator = torch.Generator(device="cuda").manual_seed(seed)
-                randn = torch.randn(shape, generator=generator, dtype=torch.bfloat16, device="cuda")
+                # XPU: random noise and its generator must share the model device.
+                generator = torch.Generator(device=self.device).manual_seed(seed)
+                randn = torch.randn(shape, generator=generator, dtype=torch.bfloat16, device=self.device)
                 img, img_ids = batched_prc_img(randn)                
                 encode_fn = lambda prompts: list(zip(*batched_prc_txt(self.mistral(prompts).to(torch.bfloat16))))
                 txt_embeds, txt_ids = self.text_encoder_cache.encode(encode_fn, [input_prompt], device=self.device)[0]
@@ -522,7 +526,9 @@ class model_factory:
             # decode latents to pixel space
             x = unpack_latent(x)
             if self.vae is not None:
-                with torch.autocast(device_type=device, dtype=torch.bfloat16):
+                # XPU: tolerate either a backend string or torch.device here.
+                autocast_device_type = getattr(device, "type", device)
+                with torch.autocast(device_type=autocast_device_type, dtype=torch.bfloat16):
                     x = self.vae.decode(x)
 
             img_msk_rebuilt = inp.get("img_msk_rebuilt") if isinstance(inp, dict) else None

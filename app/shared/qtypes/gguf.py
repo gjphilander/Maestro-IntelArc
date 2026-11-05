@@ -120,7 +120,10 @@ def _probe_gguf_cuda_runtime(force=False):
         # Do not retain the exception itself: its traceback retains this
         # probe's caller frames, which can own mmap-backed GGUF tensors.
         _GGUF_CUDA_LOAD_ERROR = f"{type(exc).__name__}: {exc}"
-        _gguf_log_once("gguf_cuda_probe_failed", f"[GGUF][llama.cpp CUDA] kernels unavailable, using fallback")
+        _gguf_log_once(
+            "gguf_cuda_probe_failed",
+            "[GGUF] CUDA-optimized kernels unavailable; using PyTorch device fallback.",
+        )
         return False
     _GGUF_CUDA_KERNELS_ENABLED_CACHE = True
     _GGUF_CUDA_MODULE = gguf_cuda_module
@@ -928,6 +931,13 @@ class GGUFWeightTensor(QTensor):
         else:
             target_dtype = _resolve_default_dtype(self._gguf_default_dtype, fallback=self.dtype)
             target_device = self.device
+        # XPU: the CUDA extension is optional; this fallback dequantizes to
+        # input.device and executes the linear operation on that same backend.
+        if torch.is_tensor(input) and input.device.type == "xpu":
+            _gguf_log_once(
+                "gguf_xpu_linear_fallback",
+                "[GGUF][XPU] CUDA fused kernels do not apply; GGUF linear layers run through PyTorch on XPU.",
+            )
         if _may_try_llamacpp_cuda_linear(self, input):
             fast_out = _try_llamacpp_cuda_linear(self, input, bias, target_dtype)
             if fast_out is not None:
@@ -1387,6 +1397,13 @@ class QEmbeddingGGUF(BaseQEmbedding):
         if isinstance(qweight, GGUFWeightTensor):
             target_dtype = _resolve_default_dtype(self._gguf_default_dtype, fallback=torch.float16)
             if self.max_norm is None and not self.scale_grad_by_freq and not self.sparse:
+                # XPU: the CUDA extension is optional; keep dequantization on
+                # the embedding indices' device.
+                if input.device.type == "xpu":
+                    _gguf_log_once(
+                        "gguf_xpu_embedding_fallback",
+                        "[GGUF][XPU] CUDA fused kernels do not apply; GGUF embeddings run through PyTorch on XPU.",
+                    )
                 if _may_try_llamacpp_cuda_embedding(qweight, input):
                     fast_out = _try_llamacpp_cuda_embedding(qweight, input, target_dtype)
                     if fast_out is not None:

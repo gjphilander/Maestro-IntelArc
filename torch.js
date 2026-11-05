@@ -1,4 +1,5 @@
 const {
+  isIntelXpu,
   isSolCapable,
   needsCuda13DriverUpdate,
   runtimeProfile,
@@ -6,6 +7,48 @@ const {
 
 module.exports = async (kernel) => {
   const runtime = runtimeProfile(kernel)
+  // XPU: Install the official version-matched Intel wheels, then exercise
+  // matmul and SDPA before marking the environment ready.
+  if (isIntelXpu(kernel)) {
+    return {
+      run: [{
+        method: "log",
+        params: { raw: "Installing the official PyTorch Intel XPU runtime..." },
+      }, {
+        method: "shell.run",
+        when: "{{!args || !args.flash_only}}",
+        params: {
+          venv: "{{args && args.venv ? args.venv : null}}",
+          path: "{{args && args.path ? args.path : '.'}}",
+          env: {
+            ONEAPI_DEVICE_SELECTOR: "{{envs.ONEAPI_DEVICE_SELECTOR || 'level_zero:gpu'}}",
+            SYCL_CACHE_PERSISTENT: "{{envs.SYCL_CACHE_PERSISTENT || '1'}}",
+            PYTORCH_ENABLE_XPU_FALLBACK: "{{envs.PYTORCH_ENABLE_XPU_FALLBACK || '1'}}",
+          },
+          message: [
+            "uv pip install torch==2.11.0 torchvision==0.26.0 torchaudio==2.11.0 --index-url https://download.pytorch.org/whl/xpu --force-reinstall",
+            "uv pip uninstall -y onnxruntime-gpu onnxruntime nvidia-ml-py triton triton-windows xformers flash-attn bitsandbytes",
+            "uv pip install --index-url https://pypi.org/simple onnxruntime",
+            "python scripts/xpu_preflight.py",
+          ],
+        },
+      }, {
+        method: "fs.write",
+        when: "{{!args || !args.flash_only}}",
+        params: {
+          path: "app/env-xpu/.maestro_xpu_runtime_v1.installed",
+          text: "Maestro Intel XPU runtime installed with PyTorch 2.11.0.",
+        },
+      }, {
+        method: "fs.write",
+        when: "{{!args || !args.flash_only}}",
+        params: {
+          path: "app/env-xpu/.maestro_xpu_preflight_v1.passed",
+          text: "Intel XPU matmul and SDPA preflight passed.",
+        },
+      }],
+    }
+  }
   const solCapable = isSolCapable(kernel)
   const windows = kernel.platform === "win32"
   const linux = kernel.platform === "linux"

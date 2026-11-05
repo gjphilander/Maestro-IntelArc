@@ -9,6 +9,7 @@ import os
 import gc
 import time
 import copy
+import re
 import subprocess
 import threading
 import logging
@@ -1581,7 +1582,7 @@ def _ensure_llama_server(bin_dir: str, device: str = "cpu") -> None:
         )
 
     missing_cuda_files = []
-    if is_windows:
+    if is_windows and device != "xpu":
         missing_cuda_files = [
             filename
             for filename in _WINDOWS_LLAMA_CUDA_FILES
@@ -1639,13 +1640,21 @@ def _ensure_llama_server(bin_dir: str, device: str = "cpu") -> None:
     # The startswith check disambiguates "llama-b..." from "cudart-..."
     # (both contain "bin-win-cuda-12.4-x64.zip" and we must download
     # the right one — and on Windows, both).
-    if is_windows:
+    if is_windows and device == "xpu":
+        # XPU: use llama.cpp's Windows SYCL package and bundled runtime DLLs.
+        asset_specs = [("llama-", "bin-win-sycl-x64.zip")]
+        archive_ext = ".zip"
+    elif is_windows:
         asset_specs = []
         if needs_executable:
             asset_specs.append(("llama-", "bin-win-cuda-12.4-x64.zip"))
         if needs_cudart:
             asset_specs.append(("cudart-", "bin-win-cuda-12.4-x64.zip"))
         archive_ext = ".zip"
+    elif is_linux and device == "xpu":
+        # XPU: use llama.cpp's Intel SYCL build on Linux as well.
+        asset_specs = [("llama-", "bin-ubuntu-sycl-fp16-x64.tar.gz")]
+        archive_ext = ".tar.gz"
     else:  # linux
         asset_specs = [("llama-", "bin-ubuntu-x64.tar.gz")]
         archive_ext = ".tar.gz"
@@ -1836,11 +1845,54 @@ def _get_server_exe(device: str = "cpu") -> str:
     download is one-time (~50-100 MB) and cached in bin_dir, so
     subsequent loads are instant.
     """
-    bin_dir = os.path.abspath(os.environ.get("MAESTRO_LLAMA_BIN", DEFAULT_BIN_DIR))
+    if device == "xpu":
+        # XPU: keep the SYCL runtime isolated from the existing CPU/CUDA binary.
+        bin_dir = os.path.abspath(
+            os.environ.get("MAESTRO_LLAMA_XPU_BIN")
+            or os.path.join(DEFAULT_CACHE_DIR, "bin-xpu")
+        )
+    else:
+        bin_dir = os.path.abspath(os.environ.get("MAESTRO_LLAMA_BIN", DEFAULT_BIN_DIR))
     _ensure_llama_server(bin_dir, device=device)
     if os.name == "nt":
         return os.path.join(bin_dir, "llama-server.exe")
     return os.path.join(bin_dir, "llama-server")
+
+
+def _probe_sycl_device(server_exe: str, server_env: dict) -> str:
+    """Require llama-server to expose a SYCL GPU instead of silently using CPU."""
+    kwargs = {
+        "capture_output": True,
+        "text": True,
+        "encoding": "utf-8",
+        "errors": "replace",
+        "timeout": 30,
+        "env": server_env,
+    }
+    if os.name == "nt":
+        kwargs["creationflags"] = subprocess.CREATE_NO_WINDOW
+    try:
+        result = subprocess.run([server_exe, "--list-devices"], **kwargs)
+    except Exception as exc:
+        raise RuntimeError(
+            "Could not query the Intel SYCL llama-server runtime. Install or "
+            "update the Intel Arc driver, then restart Maestro."
+        ) from exc
+    output = f"{result.stdout or ''}\n{result.stderr or ''}"
+    if result.returncode != 0:
+        raise RuntimeError(
+            "The Intel SYCL llama-server could not list devices. Check the Intel "
+            f"Arc driver and Level Zero runtime. Server output: {output[-1200:]}"
+        )
+    match = re.search(r"\b(SYCL\d+)\s*:", output)
+    if match is None:
+        raise RuntimeError(
+            "The selected Intel llama-server build did not detect an SYCL GPU, "
+            "so prompt enhancement cannot use the Arc device. Check the Intel "
+            f"Arc driver and ONEAPI_DEVICE_SELECTOR. Server output: {output[-1200:]}"
+        )
+    print(f"[LLM] llama-server detected Intel device {match.group(1)}.")
+    return match.group(1)
 
 
 _MTP_RUNTIME_CAPABILITY_CACHE: dict[tuple, tuple[bool, str]] = {}
@@ -2001,13 +2053,21 @@ def load_model(
 
         # Detect CPU-only/missing CUDA runtimes before downloading large weights.
         server_exe = _get_server_exe(device=device)
+        server_env = _llama_server_env(server_exe)
         if mtp_active:
             _check_mtp_runtime_capability(server_exe)
         cuda_devices = []
+        sycl_device = None
         if device == "cuda":
             from services.llama_linux_runtime import require_cuda
-            cuda_devices = require_cuda(server_exe, _llama_server_env(server_exe))
+            cuda_devices = require_cuda(server_exe, server_env)
             print(f"[LLM] Verified CUDA devices: {', '.join(cuda_devices)}")
+        elif device == "xpu":
+            # XPU: default llama.cpp to Intel Level Zero and require a real SYCL device.
+            if server_env is None:
+                server_env = os.environ.copy()
+            server_env.setdefault("ONEAPI_DEVICE_SELECTOR", "level_zero:gpu")
+            sycl_device = _probe_sycl_device(server_exe, server_env)
 
         base_cache_dir = get_model_dir()
 
@@ -2066,7 +2126,8 @@ def load_model(
         if "-c" in extra_flags:
             cmd += extra_flags
         else:
-            cmd += ["--ctx-size", "65536"] + extra_flags
+            default_context_size = "32768" if device == "xpu" else "65536"
+            cmd += ["--ctx-size", default_context_size] + extra_flags
 
         if mmproj_path:
             cmd += ["--mmproj", mmproj_path]
@@ -2090,6 +2151,9 @@ def load_model(
                 pass  # already included via extra_flags
             else:
                 cmd += ["--n-gpu-layers", "-1"]
+        elif device == "xpu":
+            # XPU: SYCL0 is discovered from this machine, never fall back to CPU.
+            cmd += ["--device", sycl_device, "--n-gpu-layers", "-1"]
         else:
             cmd += ["--n-gpu-layers", "0", "--device", "none", "--no-mmproj-offload"]
 
@@ -2099,7 +2163,7 @@ def load_model(
         print(f"[LLM] Starting llama-server on port {_server_port}")
         _process = subprocess.Popen(
             cmd,
-            env=_llama_server_env(server_exe),
+            env=server_env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             creationflags=subprocess.CREATE_NO_WINDOW if os.name == "nt" else 0,
@@ -2150,7 +2214,8 @@ def load_model(
         _device = device
         _mtp_acceleration = mtp_active
         file_size = os.path.getsize(gguf_path) / 1e6
-        print(f"[LLM] Model loaded: {repo_id} ({file_size:.0f}MB) on {device}, port {_server_port}")
+        active_device = f"xpu/{sycl_device}" if device == "xpu" else device
+        print(f"[LLM] Model loaded: {repo_id} ({file_size:.0f}MB) on {active_device}, port {_server_port}")
 
 
 def _cancel_idle_timer():

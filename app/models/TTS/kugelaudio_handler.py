@@ -3,6 +3,7 @@ import re
 
 import torch
 
+from shared.device import resolve_device
 from shared.utils import files_locator as fl
 
 from .prompt_enhancers import TTS_MONOLOGUE_PROMPT, TTS_QWEN3_DIALOGUE_PROMPT
@@ -46,6 +47,10 @@ KUGELAUDIO_CUSTOM_SETTINGS = [
 def _configure_diffusion_compile_targets(model):
     for _, submodule in model.named_modules():
         submodule._compile_me = False
+
+    # XPU: Triton's Intel backend currently fails to build its Windows helper.
+    if resolve_device().type == "xpu":
+        return
 
     prediction_head = getattr(model, "prediction_head", None)
     if prediction_head is None:
@@ -114,7 +119,8 @@ def _get_kugelaudio_model_def():
             "default": "T",
         },
         "prompt_enhancer_button_label": "Write",
-        "compile": ["transformer"],
+        # XPU: run eager; NVIDIA keeps the existing diffusion-head compilation.
+        "compile": False if resolve_device().type == "xpu" else ["transformer"],
     }
 
 

@@ -13,6 +13,7 @@ from PIL import Image
 from transformers import Qwen3VLConfig, Qwen3VLModel, Qwen3VLProcessor
 
 from mmgp import offload
+from shared.device import get_device_properties, resolve_device
 from shared.utils import files_locator as fl
 
 from .autoencoder_kl_qwenimage21 import AutoencoderKLQwenImage21
@@ -66,7 +67,8 @@ class model_factory:
                  VAE_dtype=None, save_quantized=False, model_type=None):
         self._abort = False
         self.model_def = dict(model_def or {})
-        self.device = torch.device("cuda")
+        # XPU: follow Maestro's selected accelerator; NVIDIA still resolves to CUDA.
+        self.device = resolve_device()
         filename = model_filename[0] if isinstance(model_filename, (list, tuple)) else model_filename
         # Keep non-persistent RoPE buffers real, on CPU. They are not present
         # in the safetensors checkpoints and cannot be materialized from meta.
@@ -166,8 +168,10 @@ class model_factory:
         # tiles with 25% overlap; smaller GPUs get progressively smaller tiles.
         tile_choice = VAE_tile_size
         if tile_choice is None:
-            memory_mb = (torch.cuda.get_device_properties(torch.cuda.current_device()).total_memory / 1048576
-                         if torch.cuda.is_available() else 0)
+            memory_mb = (
+                get_device_properties(self.device).total_memory / 1048576
+                if self.device.type in ("cuda", "xpu") else 0
+            )
             chooser = getattr(self.vae, "get_VAE_tile_size", None)
             tile_choice = chooser(0, memory_mb, False) if chooser is not None else (True, 384)
         if isinstance(tile_choice, dict):

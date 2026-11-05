@@ -13,10 +13,29 @@ Environment variables:
     SERVER_PORT  - Port to bind (default: 7860)
 """
 
+import os
+if os.environ.get("MAESTRO_DEVICE", "").strip().lower() == "xpu":
+    # XPU: Keep the Level Zero command-list workaround opt-in. It fixes some
+    # Arc command-submission failures, but has caused repeated-video failures
+    # on Windows in other PyTorch XPU workloads.
+    if os.environ.get("MAESTRO_XPU_IMMEDIATE_COMMANDLISTS", "").strip().lower() in (
+        "1", "true", "yes", "on"
+    ):
+        os.environ.setdefault("SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS", "1")
+    if os.name == "nt":
+        # XPU: Avoid Windows Level Zero local-memory overcommit.
+        os.environ.setdefault("NEO_LOCAL_MEMORY_ALLOCATION_MODE", "1")
+    print(
+        "[XPU] Level Zero immediate command lists: "
+        f"{os.environ.get('SYCL_PI_LEVEL_ZERO_USE_IMMEDIATE_COMMANDLISTS', 'driver default')}"
+    )
+    if os.environ.get("MAESTRO_XPU_DEBUG_SYNC") == "1":
+        os.environ["SYCL_LAUNCH_BLOCKING"] = "1"
+        print("[XPU] Synchronous kernel debugging enabled; generation will be slower.")
+
 import gc
 import sys
 import torch
-import os
 import glob
 import json
 import math
@@ -7621,16 +7640,24 @@ def system_preflight():
                        "export will fail. Install ffmpeg and restart Maestro.",
         })
 
-    # CUDA — the generation pipeline is NVIDIA-only.
+    # XPU: Surface the selected backend while warning that legacy model paths
+    # may still request CUDA-only kernels.
     try:
-        import torch as _torch
-        if not _torch.cuda.is_available():
+        from shared.device import resolve_device
+        _device = resolve_device()
+        if _device.type == "cpu":
             checks.append({
-                "id": "cuda",
+                "id": "gpu",
                 "level": "error",
-                "message": "No CUDA GPU detected. Maestro's generation "
-                           "pipeline requires an NVIDIA GPU; generation will "
+                "message": "No supported GPU detected. Maestro's generation "
+                           "pipeline requires NVIDIA CUDA or an Intel XPU runtime; generation will "
                            "not work on this machine.",
+            })
+        elif _device.type == "xpu":
+            checks.append({
+                "id": "xpu",
+                "level": "warn",
+                "message": "Intel XPU is active. Some model and acceleration paths still use CUDA-only operations; use the CPU fallback where available if a model reports an unsupported XPU operation.",
             })
     except Exception:
         checks.append({
@@ -7698,21 +7725,21 @@ def _llm_api_key_for_provider(services: dict, provider: str) -> str:
 
 
 def _llm_default_device() -> str:
-    """Default LLM device — CUDA when the system has it, else CPU.
+    """Default LLM device — the selected accelerator, else CPU.
 
     This is the value returned for `services.llm_device` when the user
     has never explicitly set it in Settings → Services. Previously
-    hardcoded to "cpu" which left CUDA-equipped users stuck on CPU
+    hardcoded to "cpu" which left GPU-equipped users stuck on CPU
     inference until they noticed the dropdown and flipped it. New
     installs on a CUDA box now get GPU LLM out of the box.
 
     User who already explicitly set "cpu" keeps "cpu" — the value is
     persisted in wgp_config.json and overrides this default. Same for
-    explicit "cuda".
+    explicit device selection remains persisted in wgp_config.json.
     """
     try:
-        if torch.cuda.is_available():
-            return "cuda"
+        from shared.device import resolve_device
+        return str(resolve_device())
     except Exception:
         pass
     return "cpu"

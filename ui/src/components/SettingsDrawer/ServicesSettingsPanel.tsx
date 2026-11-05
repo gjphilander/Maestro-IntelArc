@@ -387,9 +387,10 @@ export function ServicesSettingsPanel() {
             >
               <option value="cpu">CPU (recommended)</option>
               <option value="cuda">CUDA (uses VRAM)</option>
+              <option value="xpu">Intel Arc XPU (uses VRAM)</option>
             </select>
             <p className="text-[10px] text-text-muted mt-1">
-              CPU recommended to avoid conflicts with video generation
+              Use Intel Arc XPU to run the local LLM on your Arc GPU. CPU keeps LLM inference off the GPU.
             </p>
           </div>
         )}

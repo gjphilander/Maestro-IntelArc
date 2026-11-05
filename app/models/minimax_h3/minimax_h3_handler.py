@@ -3388,9 +3388,12 @@ class family_handler:
         try:
             import torch
 
+            from shared.device import get_device_properties, resolve_device
+
+            active_device = resolve_device()
             detected_vram_gb = (
-                torch.cuda.get_device_properties(0).total_memory / (1024 ** 3)
-                if torch.cuda.is_available()
+                get_device_properties(active_device).total_memory / (1024 ** 3)
+                if active_device.type in ("cuda", "xpu")
                 else 0.0
             )
         except Exception:

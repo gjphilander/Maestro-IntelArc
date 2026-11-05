@@ -11,6 +11,7 @@ from torch import Tensor
 import torchvision
 import math
 
+from shared.device import resolve_device
 from shared.utils.utils import convert_image_to_tensor
 
 
@@ -130,7 +131,8 @@ def encode_image_refs(ae, img_ctx: list[Image.Image]):
     # Encode each reference image
     encoded_refs = []
     for img in img_ctx_prep:
-        encoded = ae.encode(img[None].cuda())[0]
+        # XPU: keep reference tensors on the same selected device as the VAE.
+        encoded = ae.encode(img[None].to(resolve_device()))[0]
         encoded_refs.append(encoded)
 
     # Create time offsets for each reference

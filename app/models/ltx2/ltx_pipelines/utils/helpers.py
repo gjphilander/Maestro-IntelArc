@@ -10,6 +10,7 @@ import torch.nn.functional as F
 from tqdm import tqdm
 
 from mmgp import offload
+from shared.device import resolve_device, empty_cache, synchronize
 
 from ...ltx_core.components.noisers import Noiser
 from ...ltx_core.components.protocols import DiffusionStepProtocol, GuiderProtocol
@@ -41,15 +42,14 @@ from shared.utils.self_refiner import run_refinement_loop_multi
 
 
 def get_device() -> torch.device:
-    if torch.cuda.is_available():
-        return torch.device("cuda")
-    return torch.device("cpu")
+    # XPU: Use the same CUDA -> XPU -> MPS -> CPU resolver as the app runtime.
+    return resolve_device()
 
 
 def cleanup_memory() -> None:
     gc.collect()
-    torch.cuda.empty_cache()
-    torch.cuda.synchronize()
+    empty_cache()
+    synchronize()
 
 
 def image_conditionings_by_replacing_latent(
