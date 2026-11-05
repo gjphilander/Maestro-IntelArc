@@ -2,6 +2,8 @@
 
 A one-click local AI **creative studio, director, and video editor** for creators. Maestro combines a modern interface with powerful image, video, and audio generation, an LLM-directed production workflow, and a non-destructive multi-track editor. Supports NVIDIA CUDA GPUs and experimental **Intel Arc XPU GPUs**, including the Arc Pro B70. Optimized for LTX-2.5, MiniMax H3, and the latest local creative models and LoRAs.
 
+After successfull install with pinokio, **Maestro** can be run directly in the browser by going to "pinokio\api\Maestro.git" and double clicking **start-maestro.bat**.
+
 ![Maestro v3.2.5 Studio with image references and a generated video](docs/images/maestro-ui-october-2026.png)
 
 [Features](#what-it-does) · [Install](#install) · [Updates](#updates) · [Guides](docs/README.md) · [Full update history](docs/UPDATE_HISTORY.md)
