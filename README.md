@@ -1,4 +1,4 @@
-# Maestro
+# Maestro - Intel Arc XPU GPUs
 
 A one-click local AI **creative studio, director, and video editor** for creators. Maestro combines a modern interface with powerful image, video, and audio generation, an LLM-directed production workflow, and a non-destructive multi-track editor. Supports NVIDIA CUDA GPUs and experimental **Intel Arc XPU GPUs**, including the Arc Pro B70. Optimized for LTX-2.5, MiniMax H3, and the latest local creative models and LoRAs.
 
