@@ -3,6 +3,8 @@ import { isDirectorRenderChild } from '../../lib/directorJobs'
 import { useRef, useCallback, useState, useEffect, useLayoutEffect, useMemo, type JSX } from 'react'
 import { Film, Play, Square, FolderOpen, Plus, Check, Loader2, X, BookMarked, Upload, Trash2, ChevronDown, ChevronUp, Maximize2 } from 'lucide-react'
 import { TabFilter } from './TabFilter'
+import { VideoCompressionPanel } from './VideoCompressionPanel'
+import { OllamaChatPanel } from './OllamaChatPanel'
 import { ThumbnailGallery } from './ThumbnailGallery'
 import { MediaFeedItem } from './MediaFeedItem'
 import { GalleryViewer, type GalleryImageChoice } from './GalleryViewer'
@@ -610,6 +612,7 @@ function PipelinePlaceholder({ job }: { job: GenerationJob | null }) {
 
 export function MainContent() {
   const isMobile = useIsMobileSidecar()
+  const mediaFilter = useStore(s => s.mediaFilter)
   const outputs = useStore(s => s.filteredOutputs())
   const outputsTotal = useStore(s => s.outputsTotal)
   const rootOutputsLoaded = useStore(s => s.outputs.length)
@@ -1070,29 +1073,37 @@ export function MainContent() {
       <div className="px-2 md:px-6 py-2 md:py-3 border-b border-border flex items-center justify-between gap-2">
         <TabFilter />
         <div className="flex items-center gap-2 shrink-0">
-          <div className="hidden text-xs text-text-muted xl:block">
-            {outputsTotal > rootOutputsLoaded
-              ? `${rootOutputsLoaded} / ${outputsTotal} outputs`
-              : `${outputsTotal} ${outputsTotal === 1 ? 'output' : 'outputs'}`}
-            {outputs.length > rootOutputsLoaded && ` · ${outputs.length - rootOutputsLoaded} expanded`}
-          </div>
-          <button type="button" aria-label="Open full-screen gallery" title="Open full-screen gallery"
-            disabled={!outputs.some(file => file.type !== 'audio')}
-            onClick={() => {
-              const selected = outputs[activeIndex]
-              const file = selected && selected.type !== 'audio' ? selected : outputs.find(item => item.type !== 'audio')
-              if (file) openViewer(file)
-            }}
-            className="rounded-lg p-1.5 text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:opacity-35">
-            <Maximize2 size={16} />
-          </button>
-          <WorkspaceSelector />
+          {mediaFilter !== 'chat' && <>
+            <div className="hidden text-xs text-text-muted xl:block">
+              {outputsTotal > rootOutputsLoaded
+                ? `${rootOutputsLoaded} / ${outputsTotal} outputs`
+                : `${outputsTotal} ${outputsTotal === 1 ? 'output' : 'outputs'}`}
+              {outputs.length > rootOutputsLoaded && ` · ${outputs.length - rootOutputsLoaded} expanded`}
+            </div>
+            <button type="button" aria-label="Open full-screen gallery" title="Open full-screen gallery"
+              disabled={!outputs.some(file => file.type !== 'audio')}
+              onClick={() => {
+                const selected = outputs[activeIndex]
+                const file = selected && selected.type !== 'audio' ? selected : outputs.find(item => item.type !== 'audio')
+                if (file) openViewer(file)
+              }}
+              className="rounded-lg p-1.5 text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:opacity-35">
+              <Maximize2 size={16} />
+            </button>
+            <WorkspaceSelector />
+          </>}
           {!isMobile && <GlobalQueuePopover />}
         </div>
       </div>
 
       {/* Content area: feed + thumbnails */}
       <div className="flex-1 flex flex-row gap-0 overflow-hidden relative">
+        {mediaFilter === 'chat' ? (
+          <OllamaChatPanel />
+        ) : mediaFilter === 'compress' ? (
+          <VideoCompressionPanel />
+        ) : (
+          <>
         {/* Scrollable media feed */}
         <div
           ref={feedRef}
@@ -1193,6 +1204,8 @@ export function MainContent() {
           activeIndex={activeIndex}
           onThumbnailClick={handleThumbnailClick}
         />
+          </>
+        )}
       </div>
       {viewerSession && (
         <GalleryViewer key={viewerSession.id}

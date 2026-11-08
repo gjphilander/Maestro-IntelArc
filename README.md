@@ -483,6 +483,26 @@ Include the last roughly 50 lines around the failure, plus your GPU, VRAM,
 operating system, mode, and model. Review the excerpt and redact personal
 information before sharing it.
 
+### Chat attachments
+
+In the main interface's **Chat** tab, use **Attach** beside the message box.
+Select up to five UTF-8 text/code files (100 KB each) or PNG/JPEG/WebP images
+(2 MB each). Images require an Ollama vision model and the updated backend.
+PDF and Word files are not supported. Remove a selected file before sending
+with its × button. File contents are sent to the selected model as chat context.
+This attachment feature does not change chat loading or browser storage.
+
+### Classic UI fails with `KeyError: 'choices'`
+
+Some models, including FastH3, disable inherited guide and mask controls with
+empty option definitions. Maestro treats these empty definitions as disabled
+selectors when building the Classic UI and updating its control flags. If a
+previous session reported `Could not mount Gradio UI at /classic: 'choices'`,
+restart Maestro after updating. A successful startup prints
+`Gradio classic UI mounted at /classic`; open **Classic UI** from the running
+Maestro launcher. Existing control-video choices and image-inpainting controls
+remain available for models that support them.
+
 ### Windows blocks Python before startup
 
 If Windows reports that `python.exe` was blocked by a **Device Guard policy**

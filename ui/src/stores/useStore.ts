@@ -2967,7 +2967,7 @@ const _directorGalleryRequestTokens = new Map<string, number>()
 function galleryQuery(state: AppState) {
   return {
     workspace: state.browsingAllFolders ? '__all__' : state.browsingUploads ? '__uploads__' : state.activeWorkspace,
-    mediaFilter: state.mediaFilter,
+    mediaFilter: state.mediaFilter === 'compress' ? 'videos' : state.mediaFilter === 'chat' ? 'all' : state.mediaFilter,
     search: state.outputSearchQuery.trim() || undefined,
     // This option is only used by the gallery store. Editor asset discovery
     // calls fetchOutputs directly and keeps the backend's default behavior.
@@ -2989,7 +2989,9 @@ function computeFilteredOutputs(outputs: OutputFile[], mediaFilter: MediaFilter)
   }
   _foCachedOutputs = outputs
   _foCachedFilter = mediaFilter
-  if (mediaFilter === 'all') {
+  if (mediaFilter === 'chat') {
+    _foCachedResult = []
+  } else if (mediaFilter === 'all') {
     _foCachedResult = outputs
   } else if (mediaFilter === 'videos') {
     _foCachedResult = outputs.filter(o => o.type === 'video')
@@ -3010,6 +3012,8 @@ function computeFilteredOutputs(outputs: OutputFile[], mediaFilter: MediaFilter)
     _foCachedResult = outputs
   } else if (mediaFilter === 'favorites') {
     _foCachedResult = outputs.filter(o => o.favorite)
+  } else if (mediaFilter === 'compress') {
+    _foCachedResult = outputs.filter(o => o.type === 'video')
   } else {
     _foCachedResult = outputs
   }
@@ -12745,7 +12749,7 @@ export const useStore = create<AppState>((set, get) => ({
   outputSearchQuery: '',
   setMediaFilter: (f) => {
     set({ mediaFilter: f, selectedOutput: 0, selectedOutputMeta: null })
-    void get().loadOutputs()
+    if (f !== 'chat') void get().loadOutputs()
   },
   setOutputSearchQuery: (q) => {
     set({ outputSearchQuery: q, selectedOutput: 0, selectedOutputMeta: null })

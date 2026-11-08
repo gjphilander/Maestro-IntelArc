@@ -760,6 +760,25 @@ export async function toggleFavorite(name: string, workspace?: string): Promise<
   return res.json()
 }
 
+export async function compressOutput(name: string, workspace: string | undefined, quality: number, preset: string, replaceOriginal: boolean): Promise<{
+  name: string
+  workspace: string
+  original_size: number
+  compressed_size: number
+  replaced_original: boolean
+}> {
+  const res = await fetch(`${BASE}/api/v1/outputs/compress`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ name, workspace, quality, preset, replace_original: replaceOriginal }),
+  })
+  if (!res.ok) {
+    const error = await res.json().catch(() => ({ detail: 'Video compression failed.' }))
+    throw new Error(error.detail || 'Video compression failed.')
+  }
+  return res.json()
+}
+
 // --- Outputs ---
 
 export async function fetchOutputs(limit = 0, offset = 0, opts?: { favoritesOnly?: boolean; multiclipOnly?: boolean; search?: string; workspace?: string; mediaFilter?: string; cursor?: string; groupDirectorClips?: boolean; directorPipelineId?: string }): Promise<{ outputs: ApiOutput[]; total: number; next_cursor?: string | null }> {

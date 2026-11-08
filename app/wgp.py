@@ -5501,9 +5501,9 @@ def update_video_prompt_type(state, any_video_guide = False, any_video_mask = Fa
                     break
     model_type = get_state_model_type(state)
     model_def = get_model_def(model_type)
-    guide_preprocessing = model_def.get("guide_preprocessing", None) 
-    mask_preprocessing = model_def.get("mask_preprocessing", None) 
-    guide_custom_choices = model_def.get("guide_custom_choices", None) 
+    guide_preprocessing = model_def.get("guide_preprocessing") or None
+    mask_preprocessing = model_def.get("mask_preprocessing") or None
+    guide_custom_choices = model_def.get("guide_custom_choices") or None
     if any_video_guide: letters += "V"
     if any_video_mask: letters += "A"
     if any_background_image_ref: 
@@ -13899,9 +13899,10 @@ def generate_video_tab(update_form = False, state_dict = None, ui_defaults = Non
                 guide_preprocessing = { "selection": ["V", "VG"]}
                 mask_preprocessing = { "selection": ["A"]}
             else:
-                guide_preprocessing = model_def.get("guide_preprocessing", None)
-                mask_preprocessing = model_def.get("mask_preprocessing", None)
-            guide_custom_choices = model_def.get("guide_custom_choices", None)
+                # Empty overrides (e.g. FastH3) disable inherited controls.
+                guide_preprocessing = model_def.get("guide_preprocessing") or None
+                mask_preprocessing = model_def.get("mask_preprocessing") or None
+            guide_custom_choices = model_def.get("guide_custom_choices") or None
             image_ref_choices = model_def.get("image_ref_choices", None)
 
             with gr.Column(visible= guide_preprocessing is not None or mask_preprocessing is not None or guide_custom_choices is not None or image_ref_choices is not None) as video_prompt_column: 

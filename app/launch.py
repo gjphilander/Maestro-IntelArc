@@ -40,6 +40,8 @@ import glob
 import json
 import math
 import re
+import shutil
+import subprocess
 import time
 import uuid
 import asyncio
@@ -49,7 +51,7 @@ import requests
 from copy import deepcopy
 from functools import wraps
 from pathlib import Path, PureWindowsPath
-from urllib.parse import quote
+from urllib.parse import quote, urlsplit
 
 # --- Bootstrap: CWD must be app/ and sys.argv must be patched before importing wgp ---
 _app_dir = os.path.dirname(os.path.abspath(__file__))
@@ -299,7 +301,7 @@ sys.argv = _original_argv
 # --- FastAPI setup ---
 from fastapi import FastAPI, UploadFile, File, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 import uvicorn
 from services.access_log_filter import install_quiet_access_filter
@@ -8453,6 +8455,141 @@ def storage_usage():
 # ============================================================================
 # API Routes: LLM service
 # ============================================================================
+
+def _ollama_base_url() -> str:
+    """Return the locally configured Ollama API address."""
+    base_url = os.environ.get("OLLAMA_HOST", "http://127.0.0.1:11434").strip().rstrip("/")
+    if not base_url:
+        base_url = "http://127.0.0.1:11434"
+    if "://" not in base_url:
+        base_url = f"http://{base_url}"
+    parsed = urlsplit(base_url)
+    if parsed.scheme not in ("http", "https") or not parsed.netloc:
+        raise HTTPException(status_code=500, detail="OLLAMA_HOST must be an http(s) URL or host:port.")
+    return base_url
+
+
+@api.get("/api/v1/ollama/models")
+def list_ollama_models():
+    """Return the model tags reported by the user's Ollama server."""
+    base_url = _ollama_base_url()
+    try:
+        response = requests.get(f"{base_url}/api/tags", timeout=(3, 10))
+        response.raise_for_status()
+        payload = response.json()
+    except requests.RequestException as error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Cannot reach Ollama at {base_url}. Start Ollama, then refresh the model list.",
+        ) from error
+    except ValueError as error:
+        raise HTTPException(status_code=502, detail="Ollama returned an invalid model list.") from error
+
+    models = payload.get("models", []) if isinstance(payload, dict) else []
+    if not isinstance(models, list):
+        models = []
+    return {
+        "models": [
+            {"name": model.get("name") or model.get("model"), "size": model.get("size")}
+            for model in models
+            if isinstance(model, dict) and (model.get("name") or model.get("model"))
+        ]
+    }
+
+
+@api.post("/api/v1/ollama/chat")
+async def ollama_chat(request: Request):
+    """Stream an Ollama chat completion through Maestro's same-origin API."""
+    try:
+        body = await request.json()
+    except Exception as error:
+        raise HTTPException(status_code=400, detail="Expected a JSON chat request.") from error
+
+    model = body.get("model") if isinstance(body, dict) else None
+    messages = body.get("messages") if isinstance(body, dict) else None
+    if not isinstance(model, str) or not model.strip():
+        raise HTTPException(status_code=400, detail="Select an Ollama model before sending a message.")
+    if not isinstance(messages, list) or not messages or len(messages) > 100:
+        raise HTTPException(status_code=400, detail="Chat history must contain between 1 and 100 messages.")
+
+    validated_messages = []
+    total_chars = 0
+    total_image_bytes = 0
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") not in ("system", "user", "assistant"):
+            raise HTTPException(status_code=400, detail="Each chat message must have a valid role and text content.")
+        content = message.get("content")
+        if not isinstance(content, str) or len(content) > 500_000:
+            raise HTTPException(status_code=400, detail="Chat message content must be text under 500 KB.")
+        total_chars += len(content)
+        if total_chars > 2_000_000:
+            raise HTTPException(status_code=413, detail="Chat history is too large to send to Ollama.")
+        validated = {"role": message["role"], "content": content}
+        images = message.get("images", [])
+        if images:
+            import base64
+            if not isinstance(images, list) or len(images) > 5:
+                raise HTTPException(status_code=400, detail="Attach up to five images per message.")
+            for image in images:
+                try:
+                    if not isinstance(image, str) or len(image) > 2_800_000:
+                        raise ValueError("Image exceeds 2 MB.")
+                    decoded = base64.b64decode(image, validate=True)
+                    if len(decoded) > 2 * 1024 * 1024 or not (decoded.startswith(b'\x89PNG\r\n\x1a\n') or decoded.startswith(b'\xff\xd8\xff') or (decoded.startswith(b'RIFF') and decoded[8:12] == b'WEBP')):
+                        raise ValueError("Expected a PNG, JPEG or WebP image under 2 MB.")
+                    total_image_bytes += len(decoded)
+                    if total_image_bytes > 6 * 1024 * 1024:
+                        raise ValueError("Chat image history exceeds 6 MB. Start a new chat for more images.")
+                except ValueError as error:
+                    raise HTTPException(status_code=400, detail=str(error)) from error
+            validated["images"] = images
+        validated_messages.append(validated)
+
+    import httpx
+
+    base_url = _ollama_base_url()
+    client = httpx.AsyncClient(timeout=httpx.Timeout(None, connect=5.0))
+    try:
+        upstream_request = client.build_request(
+            "POST",
+            f"{base_url}/api/chat",
+            json={"model": model.strip(), "messages": validated_messages, "stream": True},
+        )
+        response = await client.send(upstream_request, stream=True)
+    except asyncio.CancelledError:
+        await client.aclose()
+        raise
+    except httpx.RequestError as error:
+        await client.aclose()
+        raise HTTPException(
+            status_code=502,
+            detail=f"Could not start the Ollama chat request at {base_url}: {error}",
+        ) from error
+
+    if not response.is_success:
+        try:
+            detail = (await response.aread()).decode("utf-8", errors="replace")[:1000]
+        finally:
+            await response.aclose()
+            await client.aclose()
+        raise HTTPException(status_code=502, detail=f"Ollama chat request failed ({response.status_code}): {detail}")
+
+    async def stream_ollama_response():
+        try:
+            async for chunk in response.aiter_bytes():
+                if chunk:
+                    yield chunk
+        finally:
+            # Starlette cancels this async generator when the browser disconnects.
+            # Closing the upstream response tells Ollama to stop the generation.
+            await response.aclose()
+            await client.aclose()
+
+    return StreamingResponse(
+        stream_ollama_response(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
 
 @api.get("/api/v1/llm/status")
 def llm_status():
@@ -30126,6 +30263,122 @@ def list_outputs(limit: int = 0, offset: int = 0, favorites_only: bool = False,
                                     director_pipeline_id=director_pipeline_id)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+_video_compression_lock = threading.Lock()
+
+
+@api.post("/api/v1/outputs/compress")
+def compress_gallery_video(body: dict):
+    """Create an opt-in H.264 copy of one video in an output workspace."""
+    name = body.get("name")
+    workspace = body.get("workspace")
+    if not isinstance(name, str) or not name.strip():
+        raise HTTPException(status_code=400, detail="Choose a generated video to compress.")
+    if workspace is not None and not isinstance(workspace, str):
+        raise HTTPException(status_code=400, detail="Choose a valid output workspace.")
+
+    workspace_name = str(workspace or _get_active_workspace()).strip() or "default"
+    workspace_dir = _gallery_directory(workspace_name, writable=True)
+    source = _safe_join(workspace_dir, name)
+    if not source or not os.path.isfile(source):
+        raise HTTPException(status_code=404, detail="The selected video was not found in that workspace.")
+    if os.path.splitext(source)[1].lower() not in {".avi", ".m4v", ".mkv", ".mov", ".mp4", ".webm"}:
+        raise HTTPException(status_code=400, detail="Choose a supported video file.")
+    replace_original = body.get("replace_original", False)
+    if not isinstance(replace_original, bool):
+        raise HTTPException(status_code=400, detail="Replace original must be true or false.")
+    if replace_original and os.path.splitext(source)[1].lower() != ".mp4":
+        raise HTTPException(status_code=400, detail="Replacing the original is currently supported for MP4 videos only.")
+    original_size = os.path.getsize(source)
+
+    quality = body.get("quality", 28)
+    try:
+        quality = max(18, min(35, int(quality)))
+    except (TypeError, ValueError):
+        raise HTTPException(status_code=400, detail="Quality must be between 18 and 35.")
+    preset = body.get("preset", "medium")
+    if not isinstance(preset, str) or preset not in {"fast", "medium", "slow"}:
+        raise HTTPException(status_code=400, detail="Choose fast, balanced, or smaller-file encoding speed.")
+
+    binary_name = "ffmpeg.exe" if os.name == "nt" else "ffmpeg"
+    candidates = [
+        os.environ.get("FFMPEG_BINARY", ""),
+        shutil.which("ffmpeg") or "",
+        os.path.join(_app_dir, "ffmpeg_bins", binary_name),
+        os.path.join(_app_dir, binary_name),
+    ]
+    ffmpeg = next((candidate for candidate in candidates if candidate and os.path.isfile(candidate)), None)
+    if not ffmpeg:
+        ffmpeg = next((resolved for candidate in candidates if candidate and (resolved := shutil.which(candidate))), None)
+    if not ffmpeg:
+        raise HTTPException(
+            status_code=503,
+            detail="FFmpeg was not found. Restart Maestro so its bundled FFmpeg can be set up, or install FFmpeg on PATH.",
+        )
+
+    source_dir = os.path.dirname(source)
+    source_stem = os.path.splitext(os.path.basename(source))[0]
+    temporary = os.path.join(source_dir, f".{source_stem}.{uuid.uuid4().hex}.tmp.mp4")
+    command = [
+        ffmpeg,
+        "-hide_banner", "-loglevel", "error", "-nostdin",
+        "-i", source,
+        "-map", "0:v:0", "-map", "0:a?",
+        "-c:v", "libx264", "-preset", preset, "-crf", str(quality),
+        "-pix_fmt", "yuv420p", "-c:a", "aac", "-b:a", "160k",
+        "-movflags", "+faststart", "-y", temporary,
+    ]
+
+    try:
+        with _video_compression_lock:
+            result = subprocess.run(
+                command,
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                check=False,
+                creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+            )
+            if result.returncode != 0:
+                details = (result.stderr or "FFmpeg exited without an error message.").strip()
+                raise HTTPException(status_code=500, detail=f"FFmpeg compression failed: {details[-1800:]}")
+            if not os.path.isfile(temporary) or os.path.getsize(temporary) == 0:
+                raise HTTPException(status_code=500, detail="FFmpeg did not create a compressed video.")
+            if replace_original:
+                output = source
+                try:
+                    os.replace(temporary, output)
+                except OSError as exc:
+                    raise HTTPException(
+                        status_code=500,
+                        detail="FFmpeg finished, but Maestro could not replace the original. It may be open in a player; the original was kept.",
+                    ) from exc
+            else:
+                # Choose the destination while holding the lock so repeated requests never overwrite a prior result.
+                output = os.path.join(source_dir, f"{source_stem}_compressed.mp4")
+                index = 2
+                while os.path.exists(output):
+                    output = os.path.join(source_dir, f"{source_stem}_compressed_{index}.mp4")
+                    index += 1
+                os.replace(temporary, output)
+    except OSError as exc:
+        raise HTTPException(status_code=500, detail=f"Could not run FFmpeg: {exc}") from exc
+    finally:
+        try:
+            if os.path.exists(temporary):
+                os.remove(temporary)
+        except OSError:
+            pass
+
+    return {
+        "name": os.path.basename(output),
+        "workspace": workspace_name,
+        "original_size": original_size,
+        "compressed_size": os.path.getsize(output),
+        "replaced_original": replace_original,
+    }
 
 
 def _resolve_gallery_media_file(filename: str, workspace: str = "") -> str:

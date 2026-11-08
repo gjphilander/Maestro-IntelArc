@@ -86,7 +86,7 @@ export function MemorySettingsPanel() {
         <label className={labelClass} htmlFor={`${id}-ram`}>Reserved RAM ceiling: {config.perc_reserved_mem_max || 'Auto'}{config.perc_reserved_mem_max ? '%' : ''}</label>
         <input id={`${id}-ram`} type="range" min={0} max={80} step={5} className="w-full"
           value={config.perc_reserved_mem_max ?? 0} onChange={event => void update({ perc_reserved_mem_max: Number(event.target.value) })} />
-        <p className={helpClass}>Sets the maximum share of system RAM that pinning can reserve. Zero uses automatic sizing. This is a ceiling, not an immediate allocation.</p>
+        <p className={helpClass}>Sets the maximum share of system RAM that pinning can reserve. Zero uses automatic sizing. Auto-tune keeps at least 10% or 4 GB as headroom when budgeting pinned model memory. This is a soft guard, not a cap on total RAM use; unpinned model data, Windows cache, and other apps can still raise system usage above 95%.</p>
       </div>
       <div>
         <label className={labelClass} htmlFor={`${id}-heads`}>Attention Head Split</label>

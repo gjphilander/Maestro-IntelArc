@@ -836,7 +836,7 @@ export interface EditorExportCapabilities {
   recommended: EditorExportSettings['encoder']
 }
 
-export type MediaFilter = 'all' | 'images' | 'videos' | 'audio' | 'avatars' | 'multiclip' | 'favorites'
+export type MediaFilter = 'all' | 'images' | 'videos' | 'audio' | 'avatars' | 'multiclip' | 'favorites' | 'compress' | 'chat'
 export type AspectRatio = 'auto' | '21:9' | '16:9' | '9:16' | '1:1' | '4:3' | '3:4'
 export type ResolutionPreset = 'auto' | '480p' | '540p' | '720p' | '768p' | '1080p' | '2k'
 export type ScailResolutionProfile = '480p' | '512p' | '704p'

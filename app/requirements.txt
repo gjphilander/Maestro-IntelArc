@@ -48,6 +48,7 @@ pyannote.audio==3.3.2
 torchcodec==0.10.0
 
 # UI & interaction
+httpx==0.28.1
 gradio==5.29.0
 pywebpush==2.3.0  # Background Web Push; VAPID keys/subscriptions stay local to Maestro
 dashscope==1.25.12
