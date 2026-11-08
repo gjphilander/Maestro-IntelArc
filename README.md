@@ -4,7 +4,7 @@ A one-click local AI **creative studio, director, and video editor** for creator
 
 To install this branch in Pinokio, go to the "pinokio\api" folder, open the command prompt, and run the command:
 
-git clone -b intel-arc-xpu --single-branch https://github.com/gjphilander/Maestro-IntelArc
+git clone -b main --single-branch https://github.com/gjphilander/Maestro-IntelArc
 
 After successfull install with pinokio, **Maestro** can be run directly in the browser by going to "pinokio\api\Maestro.git" and double clicking **start-maestro.bat**., or you can still run it from within Pinokio.
 
