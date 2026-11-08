@@ -21,11 +21,13 @@ Create with **Studio**, plan a production with **Director**, and finish it in th
 - **Director — music videos and short films.** Turn a song or story into a shot plan, prepare character references and keyframes, generate the clips, and assemble the result. Use Auto mode for a complete production or Manual mode to review each stage. The project dashboard keeps plans, prompts and takes together so you can revise individual shots. [Director guide](docs/Director-controls.md).
 - **Studio — video, images and audio.** Generate from text or references; animate, extend, blend and edit video; create and edit images; or make music, speech, cloned voices and sound effects. Queue jobs, enhance prompts and adjust model-specific controls. Models include MiniMax H3, LTX, Flux, Qwen, MOSS and Fish Audio. [Studio guide](docs/Studio-controls.md).
 - **Editor — finish on a timeline.** Arrange video, audio and titles with trimming, transitions, speed, volume and canvas controls. Bring in a Director production or gallery clips, send a shot back through AI generation, and export the finished edit.
+- **Compress generated videos.** Make a smaller H.264 MP4 copy of a video in an output workspace. Choose quality and encoding speed, and optionally replace an MP4 original after compression succeeds.
 
 ### Keep control of your creative workflow
 
 - **Reusable characters and references.** Save and share characters with appearance references and optional voices. Combine image, video and audio references in supported workflows to guide identity, action and sound. [Characters and RefMods](docs/Maestro-Characters.md).
 - **Built-in AI writing.** Local language and vision models help develop prompts and plan productions, with models downloaded on first use. Optional external providers include OpenAI, Anthropic and compatible local endpoints such as LM Studio. [Local AI guide](docs/LLM-runtime.md).
+- **Ollama video-prompt chat.** Chat with a model running in Ollama to brainstorm scenes, camera moves and complete video prompts. Copy a reply or send it directly to Studio. Conversations are saved in your browser.
 - **Models and LoRAs in one place.** Browse compatible CivitAI LoRAs and community checkpoints, manage downloads and updates, and use prompting guides and recommended strengths. [H3 checkpoint imports](docs/H3-checkpoint-import.md).
 - **Performance matched to your PC.** Auto-Tune uses your GPU, VRAM and RAM to choose starting settings. Quantization, memory offloading and duration recommendations help smaller GPUs, while advanced controls remain available. [Performance guide](docs/Performance-auto-tune.md).
 - **An organized library, wherever you work.** Separate projects into workspaces, search across folders, save favorites and reload generation settings. Use the responsive interface on a phone or tablet, with optional completion alerts and private Tailscale access to your running PC. [Remote access and notifications](docs/TAILSCALE_REMOTE_ACCESS.md).
@@ -365,6 +367,25 @@ After clicking **Start**, the launcher shows an **Open Web UI** button once the 
 - **Main workspace** — generated outputs, Director pipeline status, or the full Editor canvas and timeline
 - **Settings drawer** (gear icon) — model visibility, performance auto-tune, services (LLM, API keys, NSFW, theme)
 - **Pinokio menu** — Update, Reset, Install Inpaint Support, LoRA folder shortcuts
+
+### Ollama chat and video prompts
+
+Start Ollama and make sure it has at least one model available (for example,
+check with `ollama list`). In Maestro, open **Chat**, refresh the model list,
+select a model, and describe the scene or prompt you want to develop. Use
+**Use in Studio** on an assistant reply to place that text in the Studio prompt.
+Maestro connects to `http://127.0.0.1:11434` by default; set `OLLAMA_HOST` to
+use a different Ollama address. Chat requests run on the selected Ollama model.
+
+### Compress a generated video
+
+Open **Compress** in the main workspace and select a generated video from an
+output workspace. Adjust **Quality** (higher values make smaller files) and
+**Encoding speed** (slower encoding can make a smaller file). By default,
+Maestro saves a separate `_compressed.mp4` and preserves the source. For an MP4
+source, you can instead choose to replace it; Maestro does so only after the
+compression finishes successfully. Uploaded source videos are not available in
+this tool.
 
 ## Sharing on the local network
 
