@@ -53,23 +53,23 @@ Available inputs, editing tools and acceleration depend on the selected model an
 ## Online Resources
 [software-ecosystem-showdown](https://oneclickmobi.com/articles/software-ecosystem-showdown)
 
-https://oneclickmobi.com/articles/ray-tracing-face-off/
+[ray-tracing-face-off](https://oneclickmobi.com/articles/ray-tracing-face-off)
 
-https://oneclickmobi.com/articles/software-ecosystem-showdown/
+[software-ecosystem-showdown](https://oneclickmobi.com/articles/software-ecosystem-showdown)
 
-https://oneclickmobi.com/articles/the-ai-price-war/
+[the-ai-price-war](https://oneclickmobi.com/articles/the-ai-price-war)
 
-https://oneclickmobi.com/articles/arc-pro-b70-vs-nvidia-rtx-5060-ti/
+[arc-pro-b70-vs-nvidia-rtx-5060-ti](https://oneclickmobi.com/articles/arc-pro-b70-vs-nvidia-rtx-5060-ti)
 
-https://oneclickmobi.com/articles/workstation-and-ai-performance-of-the-arc-pro-b70/
+[workstation-and-ai-performance-of-the-arc-pro-b70](https://oneclickmobi.com/articles/workstation-and-ai-performance-of-the-arc-pro-b70)
 
-https://oneclickmobi.com/articles/gaming-performance/
+[gaming-performance](https://oneclickmobi.com/articles/gaming-performance)
 
-https://oneclickmobi.com/articles/specification-deep-dive/
+[specification-deep-dive](https://oneclickmobi.com/articles/specification-deep-dive)
 
-https://oneclickmobi.com/articles/intel-arc-pro-b60/
+[intel-arc-pro-b60](https://oneclickmobi.com/articles/intel-arc-pro-b60)
 
-https://oneclickmobi.com/articles/intel-arc-pro-b70/
+[intel-arc-pro-b70](https://oneclickmobi.com/articles/intel-arc-pro-b70)
 
 ## Updates
 
