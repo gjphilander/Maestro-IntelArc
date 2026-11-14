@@ -51,7 +51,7 @@ To verify on an Arc Pro B70, run `python scripts/xpu_preflight.py` from `app/env
 Available inputs, editing tools and acceleration depend on the selected model and hardware. See the [guides and model details](docs/README.md) for workflows, setup and model-specific licenses.
 
 ## Online Resources
-https://oneclickmobi.com/articles/software-ecosystem-showdown/
+[software-ecosystem-showdown](https://oneclickmobi.com/articles/software-ecosystem-showdown)
 
 https://oneclickmobi.com/articles/ray-tracing-face-off/
 
