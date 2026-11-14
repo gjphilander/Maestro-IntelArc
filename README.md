@@ -51,16 +51,26 @@ To verify on an Arc Pro B70, run `python scripts/xpu_preflight.py` from `app/env
 Available inputs, editing tools and acceleration depend on the selected model and hardware. See the [guides and model details](docs/README.md) for workflows, setup and model-specific licenses.
 
 ## Online Resources
-https://oneclickmobi.com/articles/software-ecosystem-showdown/
-https://oneclickmobi.com/articles/ray-tracing-face-off/
-https://oneclickmobi.com/articles/software-ecosystem-showdown/
-https://oneclickmobi.com/articles/the-ai-price-war/
-https://oneclickmobi.com/articles/arc-pro-b70-vs-nvidia-rtx-5060-ti/
-https://oneclickmobi.com/articles/workstation-and-ai-performance-of-the-arc-pro-b70/
-https://oneclickmobi.com/articles/gaming-performance/
-https://oneclickmobi.com/articles/specification-deep-dive/
-https://oneclickmobi.com/articles/intel-arc-pro-b60/
-https://oneclickmobi.com/articles/intel-arc-pro-b70/
+//oneclickmobi.com/articles/software-ecosystem-showdown
+
+//oneclickmobi.com/articles/ray-tracing-face-off
+
+//oneclickmobi.com/articles/software-ecosystem-showdown
+
+//oneclickmobi.com/articles/the-ai-price-war
+
+//oneclickmobi.com/articles/arc-pro-b70-vs-nvidia-rtx-5060-ti
+
+//oneclickmobi.com/articles/workstation-and-ai-performance-of-the-arc-pro-b70
+
+//oneclickmobi.com/articles/gaming-performance
+
+//oneclickmobi.com/articles/specification-deep-dive
+
+//oneclickmobi.com/articles/intel-arc-pro-b60
+
+//oneclickmobi.com/articles/intel-arc-pro-b70
+
 
 ## Updates
 
