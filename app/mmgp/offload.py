@@ -3349,6 +3349,7 @@ class offload:
         self.default_stream = (_DEVICE_API.default_stream(_ACTIVE_DEVICE) if _ACTIVE_DEVICE.type == "cuda" else _DEVICE_API.current_stream()) # XPU: torch.xpu exposes current_stream, not default_stream.
         self.transfer_stream = _DEVICE_API.Stream()
         self.async_transfers = False
+        self.synchronous_preload = False
         self.parameters_ref  = {}
         self.max_reservable_memory = 0
         self.stager = _PinnedStager()
@@ -4013,7 +4014,7 @@ class offload:
                 self.gpu_unload_blocks(model_id, loaded_block)
                 entry_name = model_id + "/" + loaded_block
                 next_blocks_entry = self.next_blocks_names[entry_name] if entry_name in self.next_blocks_names else None
-                if next_blocks_entry != None:
+                if self.async_transfers and next_blocks_entry != None:
                     pos = next_blocks_entry.rfind("/")
                     self.gpu_unload_blocks(model_id, next_blocks_entry[pos+1:])
                 self.loaded_blocks[model_id] = None
@@ -4578,7 +4579,10 @@ def {fname}(module, *args, **kwargs):
         self.towers_per_model[model_id] = towers_names
         self.shuttle_sizes[model_id] = 0
 
-        if current_budget == 0 or towers_names is None or len(towers_names) == 0 or not self.async_transfers:
+        synchronous_preload = (
+            self.synchronous_preload and not self.async_transfers and model_id == "transformer"
+        )
+        if current_budget == 0 or not towers_names or not (self.async_transfers or synchronous_preload):
             return
         base_size = self.blocks_of_modules_sizes[model_id] 
         current_budget -= base_size
@@ -4600,6 +4604,26 @@ def {fname}(module, *args, **kwargs):
 
             towers.append( (floors, max_floor_size, tower_size) )
             total_size += tower_size
+
+        if synchronous_preload:
+            # XPU: Keep selected blocks resident while streaming one other block at a time.
+            prefix = model_id + "/"
+            largest_streamed = max(
+                (size for name, size in self.blocks_of_modules_sizes.items() if name.startswith(prefix)),
+                default=0,
+            )
+            resident_budget = max(0, current_budget - largest_streamed)
+            for floors, max_floor_size, tower_size in towers:
+                if not max_floor_size or not total_size:
+                    continue
+                share = resident_budget * tower_size / total_size
+                ratio = min(1, (int(share) // max_floor_size) / len(floors))
+                for name in _spread([name for name, _, _ in floors], ratio):
+                    preloaded_blocks[name[len(prefix):]] = self.blocks_of_modules_sizes[name]
+            resident_size = base_size + builtins.sum(preloaded_blocks.values())
+            print(f"[MMGP][XPU] {model_id}: {resident_size / ONE_MB:.0f} MB planned resident, "
+                  f"{len(preloaded_blocks)} blocks preloaded synchronously.")
+            return
 
         # the shuttle takes window + 1 of the largest blocks from the budget: by default a window of 2 when blocks are also preloaded, which
         # smooths the transfers between the preloaded blocks without VRAM beyond the budget, 1 otherwise
@@ -4757,7 +4781,7 @@ class LoadingCallback:
         self.check_abort()
 
 
-def all(pipe_or_dict_of_modules, pinnedMemory = False, pinnedPEFTLora = False, partialPinning = False, loras = None, quantizeTransformer = True,  extraModelsToQuantize = None, quantizationType = qint8, budgets= 0, workingVRAM = None, asyncTransfers = True, compile = False, convertWeightsFloatTo = torch.bfloat16, perc_reserved_mem_max = 0, coTenantsMap = None, vram_safety_coefficient = 0.8, compile_mode ="default", verboseLevel = -1, loading_callback=None, prefetchWindow = None, smartPinning = None, readAhead = False, autoPreload = False):
+def all(pipe_or_dict_of_modules, pinnedMemory = False, pinnedPEFTLora = False, partialPinning = False, loras = None, quantizeTransformer = True,  extraModelsToQuantize = None, quantizationType = qint8, budgets= 0, workingVRAM = None, asyncTransfers = True, compile = False, convertWeightsFloatTo = torch.bfloat16, perc_reserved_mem_max = 0, coTenantsMap = None, vram_safety_coefficient = 0.8, compile_mode ="default", verboseLevel = -1, loading_callback=None, prefetchWindow = None, smartPinning = None, readAhead = False, autoPreload = False, synchronousPreload=False):
     """Configure offloading, optionally reporting phases and accepting cancellation."""
     global total_pinned_bytes, max_pinnable_bytes, last_offload_obj
     kwargs = locals().copy()
@@ -4778,7 +4802,7 @@ def all(pipe_or_dict_of_modules, pinnedMemory = False, pinnedPEFTLora = False, p
         raise error from None
 
 
-def _configure(self, pipe_or_dict_of_modules, pinnedMemory = False, pinnedPEFTLora = False, partialPinning = False, loras = None, quantizeTransformer = True,  extraModelsToQuantize = None, quantizationType = qint8, budgets= 0, workingVRAM = None, asyncTransfers = True, compile = False, convertWeightsFloatTo = torch.bfloat16, perc_reserved_mem_max = 0, coTenantsMap = None, vram_safety_coefficient = 0.8, compile_mode ="default", verboseLevel = -1, loading_callback=None, prefetchWindow = None, smartPinning = None, readAhead = False, autoPreload = False):
+def _configure(self, pipe_or_dict_of_modules, pinnedMemory = False, pinnedPEFTLora = False, partialPinning = False, loras = None, quantizeTransformer = True,  extraModelsToQuantize = None, quantizationType = qint8, budgets= 0, workingVRAM = None, asyncTransfers = True, compile = False, convertWeightsFloatTo = torch.bfloat16, perc_reserved_mem_max = 0, coTenantsMap = None, vram_safety_coefficient = 0.8, compile_mode ="default", verboseLevel = -1, loading_callback=None, prefetchWindow = None, smartPinning = None, readAhead = False, autoPreload = False, synchronousPreload=False):
     """Hook to a pipeline or a group of modules in order to reduce their VRAM requirements:
     pipe_or_dict_of_modules : the pipeline object or a dictionary of modules of the model
     quantizeTransformer: set True by default will quantize on the fly the video / image model
@@ -4835,6 +4859,7 @@ def _configure(self, pipe_or_dict_of_modules, pinnedMemory = False, pinnedPEFTLo
             budget = get_parsed_budget(budgets) 
 
     self.async_transfers = asyncTransfers and _ACTIVE_DEVICE.type != "xpu" # XPU: ring transfer registration uses CUDA runtime
+    self.synchronous_preload = synchronousPreload and _ACTIVE_DEVICE.type == "xpu"
     asyncTransfers = self.async_transfers
     self.prefetch_window = prefetchWindow
     self.read_ahead_enabled = readAhead

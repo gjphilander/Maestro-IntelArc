@@ -287,6 +287,14 @@ def build_performance_plan(hardware, config, model_def, params, adjustment=None,
     if external_vram_gb > 2:
         plan["warnings"].append("Other GPU activity is using VRAM before model loading; close other GPU applications if memory is tight.")
     allowed_profiles = [profile]
+    # XPU: Windows reports an installed 64-GB RAM system as about 63.8 GiB.
+    # Treat a high-VRAM Arc workstation as VRAM-first and use H3's existing
+    # workload-derived cap instead of the generic 3-GB small-host allowance.
+    xpu_vram_first_h3 = (
+        str(hardware.get("gpu_backend") or "").lower() == "xpu"
+        and vram >= 24
+        and ram >= 60
+    )
     blackwell_16gb_h3_video = is_h3 and _blackwell_16gb_h3_video_class(
         hardware, model_def, params, output_type
     )
@@ -305,7 +313,7 @@ def build_performance_plan(hardware, config, model_def, params, adjustment=None,
             plan["profile"] = 2
             allowed_profiles = [2, 5]
             plan["reasons"].append("H3 streams transformer weights while keeping host models pinned (Profile 2).")
-        elif ram < 64:
+        elif ram < 64 and not xpu_vram_first_h3:
             # Extra host pinning is only learned from repeated safe evidence;
             # it is never the untested starting point on a smaller RAM host.
             allowed_profiles = list(dict.fromkeys([profile, 4.5, 5])) if ram >= 24 else [profile, 5]
@@ -314,7 +322,14 @@ def build_performance_plan(hardware, config, model_def, params, adjustment=None,
             plan["transformer_budget_mb"] = 0
             plan["warnings"].append("The requested H3 workspace is tight for this GPU. Profile defaults are retained; a shorter window or lower resolution may be needed.")
         else:
-            target = vram / 3 if ram >= 96 else min(3, vram / 5)
+            if xpu_vram_first_h3:
+                target = cap_gb
+                plan["reasons"].append(
+                    f"XPU VRAM-first residency uses the workload-safe H3 allowance ({cap_gb:.1f} GB), "
+                    "including activation and reference reserves."
+                )
+            else:
+                target = vram / 3 if ram >= 96 else min(3, vram / 5)
             fallback_budget_mb = max(0, int(min(target, cap_gb) * 1024) // 256 * 256)
             raw_guard_candidate_mb = adjustment.get("h3_residency_candidate_mb")
             guard_candidate_mb = _number(raw_guard_candidate_mb, 0)
@@ -335,6 +350,8 @@ def build_performance_plan(hardware, config, model_def, params, adjustment=None,
                 )
             else:
                 plan["transformer_budget_mb"] = fallback_budget_mb
+                if xpu_vram_first_h3 and model_def.get("minimax_h3_fused_turbo"):
+                    plan["synchronous_preload"] = fallback_budget_mb > 0 and "h3_weight_budget_gb" in adjustment
                 plan["reasons"].append(f"Transformer allowance {plan['transformer_budget_mb'] / 1024:g} GB; activation and reference reserves remain protected.")
     # Available RAM includes reclaimable MMGP-owned pinned buffers. Do not
     # mistake our warm model cache for an unrelated application's memory.

@@ -70,6 +70,8 @@ def per_job_memory_options(args, output_type="video"):
     plan = getattr(args, "_maestro_per_job_memory_plan", None) or {}
     if plan.get("applied") and plan.get("output_type") == output_type:
         options = {}
+        if plan.get("synchronous_preload") and plan.get("transformer_budget_mb", 0) > 0:
+            options["synchronous_preload"] = True
         if plan.get("override_read_ahead"):
             options["read_ahead"] = plan["read_ahead"]
         if plan.get("override_reserved_ram"):
