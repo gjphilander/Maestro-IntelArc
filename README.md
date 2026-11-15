@@ -10,6 +10,12 @@ After successfull install with pinokio, **Maestro** can be run directly in the b
 
 ![Maestro v3.2.5 Studio with image references and a generated video](docs/images/maestro-ui-october-2026.png)
 
+## Maestro Video Compressor added.
+![Maestro v3.2.5 Studio with image references and a generated video](docs/images/compress-ui-november-2026.png)
+
+## Maestro PROMPT generator added. (Ollama must be installed)
+![Maestro v3.2.5 Studio with image references and a generated video](docs/images/chat-ui-november-2026.png)
+
 [Features](#what-it-does) · [Install](#install) · [Updates](#updates) · [Guides](docs/README.md) · [Full update history](docs/UPDATE_HISTORY.md)
 
 ## What it does
