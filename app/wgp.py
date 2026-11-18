@@ -4787,8 +4787,13 @@ def load_models(model_type, override_profile = -1, output_type="video", preview_
     from services.memory_settings import per_job_memory_options
     job_options = per_job_memory_options(args, output_type)
     effective_reserved_ram = job_options.get("reserved_ram_fraction", perc_reserved_mem_max)
-    if active_device.type == "xpu" and job_options.get("synchronous_preload"):
-        # XPU: Use the H3 residency budget with synchronous copies. On Auto,
+    xpu_ltx25_preload = (
+        active_device.type == "xpu"
+        and model_def.get("ltx25_native_runtime")
+        and model_def.get("lock_inference_steps")
+    )
+    if active_device.type == "xpu" and (job_options.get("synchronous_preload") or xpu_ltx25_preload):
+        # XPU: Use existing H3/LTX residency budgets with synchronous copies. On Auto,
         # keep the CPU weights pageable instead of pinning the checkpoint.
         kwargs["synchronousPreload"] = True
         if xpu_default_reserved_ram:

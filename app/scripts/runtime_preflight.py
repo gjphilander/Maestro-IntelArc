@@ -47,6 +47,20 @@ def main() -> int:
         return 0
 
     cuda_available = bool(torch.cuda.is_available())
+    # XPU: Report the active Intel runtime before probing CUDA-only packages.
+    xpu = getattr(torch, "xpu", None)
+    if not cuda_available and xpu is not None and xpu.is_available():
+        print(
+            f"[Runtime] Python {sys.version_info.major}.{sys.version_info.minor}.{sys.version_info.micro} | "
+            f"PyTorch {torch.__version__} | XPU | {xpu.get_device_name(0)}"
+        )
+        print(
+            "[Runtime] Attention: native PyTorch XPU SDPA | "
+            "CUDA acceleration packages skipped (SageAttention, Lightx2v NVFP4, FlashAttention, H3 Sol Engine)."
+        )
+        if sys.platform == "win32":
+            print("[Runtime] Optional FLA Triton kernels may use CPU fallbacks on Windows.")
+        return 0
     gpu_name = "CUDA unavailable"
     capability: tuple[int, int] | None = None
     if cuda_available:

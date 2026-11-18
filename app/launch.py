@@ -31684,6 +31684,31 @@ if __name__ == "__main__":
     # LAN access works; only the displayed URL is loopback.
     display_host = "127.0.0.1" if host == "0.0.0.0" else host
 
+    if os.environ.get("MAESTRO_OPEN_BROWSER") == "1":
+        def open_browser_when_ready():
+            import webbrowser
+            from urllib.request import urlopen
+
+            url = f"http://{display_host}:{port}/"
+            deadline = time.monotonic() + 120
+            while time.monotonic() < deadline:
+                try:
+                    with urlopen(url, timeout=2) as response:
+                        if response.status == 200:
+                            break
+                except Exception:
+                    pass
+                time.sleep(0.5)
+            else:
+                print(f"[Maestro] Browser startup timed out. Open {url} manually.")
+                return
+            try:
+                webbrowser.open(url)
+            except Exception as error:
+                print(f"[Maestro] Could not open the browser: {error}. Open {url} manually.")
+
+        threading.Thread(target=open_browser_when_ready, daemon=True, name="maestro-browser").start()
+
     print(f"\n{'='*50}")
     print(f"  Maestro UI:    http://{display_host}:{port}/")
     # Trailing slash required: the Gradio submount 404s the bare path.

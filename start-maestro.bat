@@ -91,6 +91,7 @@ python scripts\xpu_preflight.py
 if errorlevel 1 goto preflight_failed
 
 :launch_maestro
+set "MAESTRO_OPEN_BROWSER=1"
 echo Maestro will print the WebUI address below. Press Ctrl+C to stop it gracefully.
 python launch.py
 set "MAESTRO_EXIT_CODE=%ERRORLEVEL%"

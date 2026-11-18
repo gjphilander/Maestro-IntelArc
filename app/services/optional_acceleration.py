@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib
 import importlib.metadata
 import sys
+import warnings
 from collections.abc import Callable
 from types import ModuleType
 
@@ -120,6 +121,7 @@ def _disable_flash_attention(
     emit: Callable[[str], None],
     detail: str,
     repair_hint: bool = True,
+    status_message: str | None = None,
 ) -> bool:
     global _FLASH_ATTENTION_USABLE, _FLASH_ATTENTION_DETAIL
 
@@ -141,7 +143,7 @@ def _disable_flash_attention(
     )
     if repair_hint:
         message += " Run Update in Pinokio to repair the optional kernel."
-    emit(message)
+    emit(status_message or message)
     return False
 
 
@@ -162,6 +164,36 @@ def prepare_optional_flash_attention(
 
     global _FLASH_ATTENTION_USABLE, _FLASH_ATTENTION_DETAIL
     importer = import_module or importlib.import_module
+    # XPU: Maestro's optional wheel probe validates CUDA extensions. Intel
+    # attention runs through PyTorch's native XPU SDPA dispatch.
+    try:
+        torch = importer("torch")
+        xpu = getattr(torch, "xpu", None)
+        use_xpu = not torch.cuda.is_available() and xpu is not None and xpu.is_available()
+    except Exception:
+        use_xpu = False
+    if use_xpu:
+        # XPU: These optional imports announce expected CUDA-only fallbacks.
+        # Match the exact warning and module so other runtime warnings remain visible.
+        warnings.filterwarnings(
+            "ignore",
+            message=r"^CUDA is not available or torch_xla is imported\. Disabling autocast\.$",
+            category=UserWarning,
+            module=r"^diffusers\.models\.transformers\.transformer_kandinsky$",
+        )
+        warnings.filterwarnings(
+            "ignore",
+            message=r"^Triton is not supported on current platform, roll back to CPU\.$",
+            category=UserWarning,
+            module=r"^fla\.utils$",
+        )
+        return _disable_flash_attention(
+            import_module=importer,
+            emit=emit,
+            detail="Intel XPU uses native PyTorch SDPA",
+            repair_hint=False,
+            status_message="[Runtime] Intel XPU attention: PyTorch SDPA.",
+        )
     try:
         flash_attn = importer("flash_attn")
         # Importing the package should load the extension, but checking the two

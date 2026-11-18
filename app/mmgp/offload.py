@@ -839,7 +839,7 @@ class _PinnedStager:
             inner[name], offset = self._pinned_copy(getattr(t, name), slot, offset, parallel)
         return type(t).__tensor_unflatten__(inner, meta, t.size(), t.stride()), offset
 
-    def to_gpu(self, p, parallel=lambda: True, read_job=None, read_position=0):
+    def to_gpu(self, p, parallel=lambda: True, read_job=None, read_position=0, queue_xpu=False):
         t = p.data if type(p) is torch.nn.Parameter else p
         if _ACTIVE_DEVICE.type == "xpu":
             # XPU: bypass MMGP's CUDA-oriented pinned staging path. Intel's
@@ -847,8 +847,11 @@ class _PinnedStager:
             # device memory; direct synchronous copies are the safe fallback.
             if not self.xpu_direct_logged:
                 self.xpu_direct_logged = True
-                print("[MMGP][XPU] Using direct synchronous weight transfers; pinned staging is bypassed.")
-            return p.to(_ACTIVE_DEVICE, non_blocking=False)
+                mode = "block-batched" if queue_xpu else "synchronous"
+                print(f"[MMGP][XPU] Using direct {mode} weight transfers; pinned staging is bypassed.")
+            # XPU: Original CPU weights remain owned by blocks_of_modules.
+            # Queue on the copy_block stream and wait once at the block boundary.
+            return p.to(_ACTIVE_DEVICE, non_blocking=queue_xpu)
         if not self.enabled:
             return p.to(_ACTIVE_DEVICE, non_blocking=True)
         if type(t) is torch.Tensor:
@@ -3831,7 +3834,12 @@ class offload:
                     if moved is not None and i in moved:
                         q = self.stager.checked(p, moved[i])
                     else:
-                        q = self.stager.to_gpu(p, parallel_staging, read_job, read_position) if read_job is not None else self.stager.to_gpu(p, parallel_staging)
+                        q = self.stager.to_gpu(
+                            p, parallel_staging, read_job, read_position,
+                            queue_xpu=self.synchronous_preload and os.environ.get(
+                                "MAESTRO_XPU_BATCH_WEIGHT_COPIES", "1"
+                            ) == "1",
+                        )
                     if read_job is not None:
                         read_job.complete(read_position, read_size)
                         read_position += read_size
