@@ -280,7 +280,7 @@ export function OllamaChatPanel() {
     })
   }
 
-  const usePromptInStudio = (content: string) => {
+  const sendPromptToStudio = (content: string) => {
     setParam('prompt', content)
     setMediaFilter('all')
   }
@@ -380,7 +380,7 @@ export function OllamaChatPanel() {
                         {copiedMessageId === message.id ? <Check size={11} /> : <Copy size={11} />}
                         {copiedMessageId === message.id ? 'Copied' : 'Copy'}
                       </button>
-                      <button type="button" onClick={() => usePromptInStudio(message.content)}
+                      <button type="button" onClick={() => sendPromptToStudio(message.content)}
                         className="rounded px-1.5 py-1 text-[10px] text-accent-blue hover:bg-accent-blue/10">
                         Use in Studio
                       </button>

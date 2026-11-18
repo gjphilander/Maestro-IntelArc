@@ -17,6 +17,7 @@ class LiveGpuTelemetryTests(unittest.TestCase):
         nvml = ModuleType("pynvml")
         nvml.nvmlInit = Mock()
         nvml.nvmlDeviceGetHandleByIndex = Mock(return_value="gpu0")
+        nvml.nvmlDeviceGetName = Mock(return_value="Test NVIDIA GPU")
         nvml.nvmlDeviceGetUtilizationRates = Mock(return_value=SimpleNamespace(gpu=compute))
         nvml.nvmlDeviceGetMemoryInfo = Mock(return_value=SimpleNamespace(used=21 * 1024**3, total=24 * 1024**3))
         if unavailable:
@@ -31,7 +32,10 @@ class LiveGpuTelemetryTests(unittest.TestCase):
         ))
         graphics = ModuleType("services.gpu_engine_win")
         graphics.get_gpu_3d_utilization = Mock(return_value=0)
-        with patch.dict(sys.modules, {"pynvml": nvml, "psutil": psutil, "services.gpu_engine_win": graphics}):
+        torch = ModuleType("torch")
+        torch.xpu = SimpleNamespace(is_available=lambda: False)
+        with patch.dict(sys.modules, {"pynvml": nvml, "psutil": psutil,
+                                     "services.gpu_engine_win": graphics, "torch": torch}):
             spec = importlib.util.spec_from_file_location("telemetry_fixture", ROOT / "app/services/live_stats.py")
             module = importlib.util.module_from_spec(spec)
             spec.loader.exec_module(module)

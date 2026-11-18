@@ -29,14 +29,15 @@ class TestPinokioGpuCompatibility(unittest.TestCase):
         launcher = (_ROOT / "pinokio.js").read_text(encoding="utf-8")
 
         self.assertNotIn("if (kernel.gpu", launcher)
-        self.assertIn('text: "Start"', launcher)
+        self.assertIn('text: intelXpu ? "Start (Intel XPU)" : "Start"', launcher)
         self.assertIn('href: "start.js"', launcher)
 
     def test_fresh_install_still_uses_pinokios_documented_gpu_variable(self):
         installer = (_ROOT / "install.js").read_text(encoding="utf-8")
 
-        self.assertIn("{{gpu !== 'nvidia'}}", installer)
-        self.assertIn("This app requires an NVIDIA GPU", installer)
+        self.assertIn("{{gpu !== 'nvidia' && !${intelXpu}}}", installer)
+        self.assertIn("const intelXpu = isIntelXpu(kernel)", installer)
+        self.assertIn("supported NVIDIA or Intel Arc GPU", installer)
 
     def test_fresh_install_never_requests_hugging_face_login(self):
         installer = (_ROOT / "install.js").read_text(encoding="utf-8")
