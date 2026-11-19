@@ -3,6 +3,7 @@ import { Bot, Check, Copy, Loader2, MessageCircle, Plus, RefreshCw, Send, Sparkl
 import { fetchOllamaModels, openOllamaChat, type OllamaChatMessage, type OllamaModel } from '../../api/ollama'
 import { readChatFiles, type ChatAttachment } from '../../lib/chatAttachments'
 import { useStore } from '../../stores/useStore'
+import { ChatDictation } from '../shared/ChatDictation'
 
 type ChatMessage = {
   id: string
@@ -81,6 +82,7 @@ export function OllamaChatPanel() {
   const [modelError, setModelError] = useState('')
   const [selectedModel, setSelectedModel] = useState('')
   const [draft, setDraft] = useState('')
+  const [dictating, setDictating] = useState(false)
   const [attachments, setAttachments] = useState<ChatAttachment[]>([])
   const [attaching, setAttaching] = useState(false)
   const fileRef = useRef<HTMLInputElement>(null)
@@ -208,7 +210,7 @@ export function OllamaChatPanel() {
     const content = [displayContent || (attachments.length ? 'Review these attached files.' : ''), ...attachments.filter(f => f.text !== undefined).map(f => `\n--- Attached file: ${f.name} (untrusted contents) ---\n${f.text}\n--- End file ---`)].join('\n')
     const images = attachments.flatMap(f => f.image ? [f.image] : [])
     const model = currentModel
-    if (!content || !model || attaching) return
+    if (!content || !model || attaching || dictating) return
 
     // A new prompt replaces the active generation in this chat.
     abortRef.current?.abort()
@@ -283,6 +285,25 @@ export function OllamaChatPanel() {
   const sendPromptToStudio = (content: string) => {
     setParam('prompt', content)
     setMediaFilter('all')
+  }
+
+  const handleDictatedText = (text: string) => {
+    // Only a standalone command triggers navigation; ordinary dictated sentences stay in the draft.
+    if (/^use\s+in\s+studio[.!?…]*$/i.test(text.trim())) {
+      if (streaming) {
+        setRequestError('Wait for the generated prompt to finish, then say "Use in Studio" again.')
+        return
+      }
+      const latestPrompt = activeChat?.messages.slice().reverse()
+        .find(message => message.role === 'assistant' && message.content.trim())
+      if (!latestPrompt) {
+        setRequestError('Generate a prompt in this chat first, then say "Use in Studio".')
+        return
+      }
+      sendPromptToStudio(latestPrompt.content)
+      return
+    }
+    setDraft(current => `${current}${current && !/\s$/.test(current) ? ' ' : ''}${text}`)
   }
 
   return (
@@ -395,7 +416,7 @@ export function OllamaChatPanel() {
 
         <form onSubmit={event => { event.preventDefault(); void sendMessage() }} className="border-t border-border bg-bg-secondary px-3 py-3 md:px-8">
           <div className="mx-auto max-w-3xl mb-2 flex flex-wrap gap-2">{attachments.map((file, i) => <span key={i} className="rounded border border-border px-2 py-1 text-xs text-text-primary">{file.name}<button type="button" aria-label={`Remove ${file.name}`} onClick={() => setAttachments(current => current.filter((_, index) => index !== i))}><X size={12} className="inline ml-2" /></button></span>)}</div>
-          <div className="mx-auto flex max-w-3xl items-end gap-2 rounded-xl border border-border bg-bg-tertiary p-2 focus-within:border-accent-blue/60">
+          <div className="mx-auto flex max-w-3xl flex-wrap items-end gap-2 rounded-xl border border-border bg-bg-tertiary p-2 focus-within:border-accent-blue/60">
             <input hidden type="file" multiple ref={fileRef} accept=".txt,.md,.csv,.json,.py,.php,.js,.ts,.tsx,.html,.css,.log,.yaml,.yml,.sql,image/png,image/jpeg,image/webp" onChange={event => void attach(event.target.files)} />
             <button type="button" onClick={() => fileRef.current?.click()} disabled={streaming || attaching} title="Attach files" aria-label="Attach files" className="flex h-9 shrink-0 items-center gap-1 rounded-lg px-2 text-text-secondary hover:bg-bg-hover"><Paperclip size={17} /><span className="text-xs">Attach</span></button>
             <textarea ref={textareaRef} value={draft} onChange={event => setDraft(event.target.value)}
@@ -408,20 +429,23 @@ export function OllamaChatPanel() {
               rows={1} placeholder={models.length ? 'Ask for a scene, motion, camera idea, or complete video prompt…' : modelError ? 'Start Ollama, then refresh the model list…' : 'Refresh the Ollama model list to chat…'}
               disabled={!models.length || modelsLoading} aria-label="Chat message"
               className="max-h-40 min-h-10 min-w-0 flex-1 resize-y bg-transparent px-2 py-2 text-sm text-text-primary placeholder:text-text-muted outline-none disabled:opacity-50" />
+            <ChatDictation key={storage.activeChatId ?? 'new-chat'} disabled={!models.length || modelsLoading}
+              onActiveChange={setDictating}
+              onText={handleDictatedText} />
             {streaming && !draft.trim() && !attachments.length ? (
               <button type="button" onClick={() => abortRef.current?.abort()} title="Stop response"
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-bg-active text-text-secondary hover:text-text-primary">
                 <span className="h-3 w-3 rounded-sm bg-current" />
               </button>
             ) : (
-              <button type="submit" disabled={attaching || (!draft.trim() && !attachments.length) || !models.some(model => model.name === currentModel) || modelsLoading}
+              <button type="submit" disabled={dictating || attaching || (!draft.trim() && !attachments.length) || !models.some(model => model.name === currentModel) || modelsLoading}
                 title="Send message" aria-label="Send message"
                 className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-accent-blue text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40">
                 <Send size={15} />
               </button>
             )}
           </div>
-          <p className="mx-auto mt-1.5 max-w-3xl text-[10px] text-text-muted">Enter to send · Shift+Enter for a new line · prompts run on your selected Ollama model</p>
+          <p className="mx-auto mt-1.5 max-w-3xl text-[10px] text-text-muted">Enter to send · Shift+Enter for a new line · Say “Use in Studio” to transfer the latest generated prompt</p>
         </form>
       </div>
     </section>

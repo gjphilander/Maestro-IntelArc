@@ -106,7 +106,7 @@ s2mel:
     dilation_rate: 1
     p_dropout: 0.2
     style_condition: true
-gpt_checkpoint: E:\ML\Wan2GP\ckpts\index_tts2_gpt_fp16.safetensors
+gpt_checkpoint: gpt.safetensors
 w2v_stat: wav2vec2bert_stats.pt
 s2mel_checkpoint: s2mel.safetensors
 emo_matrix: feat2.pt
@@ -120,9 +120,9 @@ emo_num:
 - 5
 - 10
 - 24
-qwen_emo_path: E:\ML\Wan2GP\ckpts\qwen0.6bemo4-merge
+qwen_emo_path: qwen0.6bemo4-merge
 vocoder:
   type: bigvgan
   name: ckpts\bigvgan_v2_22khz_80band_256x
 version: 2.0
-w2v_bert_path: E:\ML\Wan2GP\ckpts\w2v-bert-2.0
+w2v_bert_path: w2v-bert-2.0

@@ -56,6 +56,13 @@ from urllib.parse import quote, urlsplit
 # --- Bootstrap: CWD must be app/ and sys.argv must be patched before importing wgp ---
 _app_dir = os.path.dirname(os.path.abspath(__file__))
 os.chdir(_app_dir)
+# Maestro starts through launch.py rather than running wgp.py as __main__, so
+# invoke the shared setup here as well. It downloads FFmpeg into app/ffmpeg_bins
+# when needed, adds that project-relative directory to PATH, and sets the
+# explicit binary environment variables used by the media helpers.
+from shared.ffmpeg_setup import download_ffmpeg
+download_ffmpeg()
+
 from shared.cuda_memory import apply_startup_settings
 # The allocator must precede hardware detection, model imports and profiling.
 # wgp also calls this for the classic entry point; the helper is idempotent.
@@ -190,6 +197,57 @@ if _hf_token_path:
 # Now safe to import wgp - all module-level code will run with patched argv
 print("[Maestro] Importing WanGP engine...")
 import wgp
+
+
+def _portable_output_path(value: str) -> str:
+    """Keep output paths relative when they belong to this moved checkout."""
+    value = str(value or "outputs").strip() or "outputs"
+    expanded = os.path.normpath(os.path.expanduser(value))
+    if not os.path.isabs(expanded):
+        return expanded
+
+    app_root = os.path.normcase(os.path.abspath(_app_dir))
+    absolute = os.path.normcase(os.path.abspath(expanded))
+    try:
+        if os.path.commonpath((app_root, absolute)) == app_root:
+            return os.path.relpath(absolute, app_root)
+    except ValueError:
+        pass  # Different Windows drives cannot share a common path.
+
+    # Older Maestro configs sometimes persisted an absolute path such as
+    # C:\\Maestro.git\\app\\outputs. Rebase paths below the old checkout's
+    # root onto this checkout and store them relative to app/ instead.
+    project_root = os.path.dirname(_app_dir)
+    project_name = os.path.basename(project_root).casefold()
+    parts = Path(expanded).parts
+    root_index = next(
+        (index for index, part in enumerate(parts) if part.casefold() == project_name),
+        None,
+    )
+    if root_index is not None:
+        suffix = parts[root_index + 1:]
+        rebased = os.path.join(project_root, *suffix) if suffix else project_root
+        return os.path.relpath(rebased, _app_dir)
+
+    # Keep deliberately configured external output directories intact.
+    return expanded
+
+
+_output_paths_changed = False
+for _output_key in ("save_path", "image_save_path", "audio_save_path"):
+    _old_output_path = wgp.server_config.get(_output_key, "outputs")
+    _new_output_path = _portable_output_path(_old_output_path)
+    if _new_output_path != _old_output_path:
+        wgp.server_config[_output_key] = _new_output_path
+        _output_paths_changed = True
+        print(f"[Workspace] Rebased {_output_key}: {_old_output_path} -> {_new_output_path}")
+if _output_paths_changed:
+    try:
+        with open(wgp.server_config_filename, "w", encoding="utf-8") as _config_file:
+            json.dump(wgp.server_config, _config_file, indent=4)
+    except Exception as _config_error:
+        print(f"[Workspace] Could not save portable output paths: {_config_error}")
+
 from models.minimax_h3.turbo import (
     MINIMAX_H3_TURBO_MANIFEST,
     MINIMAX_H3_TURBO_PRESETS,
@@ -7633,7 +7691,11 @@ def system_preflight():
     checks = []
 
     # ffmpeg — hard requirement for muxing/concat/audio.
-    ffmpeg_path = _shutil.which("ffmpeg")
+    ffmpeg_path = (
+        os.environ.get("FFMPEG_BINARY")
+        if os.path.isfile(os.environ.get("FFMPEG_BINARY", ""))
+        else _shutil.which("ffmpeg")
+    )
     if not ffmpeg_path:
         checks.append({
             "id": "ffmpeg",
