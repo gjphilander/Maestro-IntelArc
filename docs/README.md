@@ -6,6 +6,8 @@ Start with the [README](../README.md) for installation and the feature overview.
 
 - [Studio controls](Studio-controls.md) — video, image and audio workflows, queues, gallery search and saved settings.
 - [Director controls](Director-controls.md) — music videos, short films, soundtrack analysis and reviewable production stages.
+- [Editor](Editor.md) — timeline projects, manual editing, AI review and export.
+- [Editor overlays](Editor-overlays.md) — animated title overlays, green/blue screen keying and soft-edge controls.
 - [Prompt enhancement API](Studio-enhancement-api.md) — queued enhancement, saved drafts and programmatic control.
 - [Characters and RefMods](Maestro-Characters.md) — reusable appearance references, portable characters and voice sharing.
 - [Speech characters](TTS-Characters.md) — saved voices across speech workflows.
@@ -13,6 +15,7 @@ Start with the [README](../README.md) for installation and the feature overview.
 ## Video and reference workflows
 
 - [FastH3](FastH3.md) — V2, OmniRef, supported formats and experimental limits.
+- [H3 LightX2V accelerators](H3-LightX2V-Accelerators.md) — workflow-matched four/eight-step recipes.
 - [H3 Fused LoRAs](H3-Fused-LoRAs.md) — adapter compatibility and sampling guidance.
 - [H3 community checkpoints](H3-checkpoint-import.md) — supported imports, verification and workflow pairing.
 - [DaSiWa models](DaSiWa-models.md) — checkpoint variants and native formats.
@@ -23,11 +26,13 @@ Start with the [README](../README.md) for installation and the feature overview.
 - [TaoMate H3](TaoMate-H3.md) — the optional three-step Frames recipe.
 - [H3 Singularity](H3-Singularity.md) — experimental reference-generation workflow.
 - [Generation previews](Generation-preview.md) — live video and frame preview choices.
+- [FlashVSR](FlashVSR.md) — v1.1 and Plus Turbo upscaling.
 - [DLSS finishing](DLSS5.md) — optional neural rendering and frame generation on supported systems.
 
 ## Image models
 
 - [MOSS Image](MOSS-Image.md) — Base/SFT generation, layouts and prompt enhancement.
+- [Fibo 2.0](Fibo-2.md) — structured text rendering, ordered references and masked Turbo editing.
 - [Qwen Image 2.1](Qwen-Image-2.1.md) — generation, reference editing, Turbo, transparency and VAE memory.
 - [Flux 3 Klein](Flux-3-Klein.md) — model variants, references and LoRAs.
 
@@ -40,18 +45,26 @@ Start with the [README](../README.md) for installation and the feature overview.
 
 ## Performance and access
 
+- [ComfyUI integration](ComfyUI.md) — shared model folders, imported workflows and optional execution mappings.
+- [Optional CUDA kernels](optional-kernel-pins.md) — supported stacks, pinned downloads and fallbacks.
 - [Performance Auto-Tune](Performance-auto-tune.md) — hardware recommendations and manual controls.
+- [Experimental Profile 0](Profile-0.md) — separate memory runtime, restart requirements and compatibility limits.
+- [Experimental Worlds](Worlds-Hy-Nomas.md) — Hy-Nomas world creation, saved state and queued camera moves.
 - [Duration recommendations](Duration-recommendations.md) — tested and estimated starting points by hardware and workload.
 - [H3 on 16GB GPUs](H3-16GB-placement.md) — memory placement and the reported regression.
 - [Model downloads](Download-controls.md) — progress, cancellation and retries.
 - [Local language models](LLM-runtime.md) — built-in writers, vision and runtime setup.
 - [LM Studio memory](LM-Studio-memory.md) — releasing external writer memory before generation.
 - [Private remote access and notifications](TAILSCALE_REMOTE_ACCESS.md) — Tailscale HTTPS and device notification setup.
+- [Agent Access](Agent-Access.md) — secure MCP setup, installation-scoped grants, named operations, media uploads and lifecycle limits.
 
 ## Updates and development
 
 - [Technical integration records](technical/README.md) and [testing guides](testing/README.md).
 - [Complete update history](UPDATE_HISTORY.md) — every dated update announcement, including those summarized in the README.
+- [WanGP October ports](WanGP-October-2026-Ports.md) — first-batch scope and validation limits.
 - [Detailed changelog](../CHANGELOG.md) — development changes and release entries.
-- [Current release notes](RELEASE_NOTES_V3.2.5.md) — v3.2.5 behavior, validation and known limits.
+- [v4.0.0 release notes](RELEASE_NOTES_V4.0.0.md) — features, upgrade behavior, validation scope and the one-time Graphite Dark introduction.
+- [v3.3.0 porting notes](RELEASE_NOTES_V3.3.0.md) — port scope, validation and testing instructions.
+- [v3.2.5 release notes](RELEASE_NOTES_V3.2.5.md) — previous Main release behavior and known limits.
 - [API examples](../README.md#notification-and-remote-access-api) and [developer prompt bench](../README.md#developer-prompt-bench).

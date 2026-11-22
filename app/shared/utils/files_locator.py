@@ -3,7 +3,8 @@ import os
 from pathlib import Path
 from typing import Iterable, List, Optional, Union
 
-default_checkpoints_paths = ["ckpts", "."]
+external_roots = [p for p in os.environ.get("MAESTRO_EXTERNAL_CHECKPOINTS", "").split(os.pathsep) if p and os.path.isabs(p) and os.path.isdir(p)]
+default_checkpoints_paths = ["ckpts", *external_roots, "."]
 
 _checkpoints_paths = default_checkpoints_paths
 

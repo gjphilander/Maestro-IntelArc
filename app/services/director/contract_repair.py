@@ -23,6 +23,124 @@ from .physical_continuity import (
 _PATCH_KEYS = {"shot_index", "source_event_ids", "physical_state"}
 
 
+def invalid_grounded_value_fields(rows: list[dict]) -> dict[str, tuple[int, str, int, str]]:
+    """Locate invalid enum values without accepting or dropping the ledger.
+
+    Keep paths caller-owned: the model may choose a replacement literal, never
+    a row, predicate, subject, transition or arbitrary field to edit.
+    """
+    fields = {}
+    for row_index, row in enumerate(rows):
+        state = row.get("physical_state")
+        if not isinstance(state, Mapping):
+            continue
+        for section in ("opening", "transitions", "closing"):
+            entries = state.get(section)
+            if not isinstance(entries, list):
+                continue
+            for entry_index, entry in enumerate(entries):
+                if not isinstance(entry, Mapping):
+                    continue
+                if str(entry.get("predicate", "")).strip().casefold() != "grounded":
+                    continue
+                names = ("from_value", "to_value") if section == "transitions" else ("value",)
+                for name in names:
+                    value = entry.get(name)
+                    # Null is legal only for the opening side of establishment.
+                    if name == "from_value" and value is None and entry.get("operation") == "establish":
+                        continue
+                    if not isinstance(value, str) or not value.strip():
+                        continue  # Structural errors use the ordinary plan repair.
+                    if value.strip().casefold() in GROUNDED_STATE_VALUES:
+                        continue
+                    key = f"shot_{row_index + 1}_{section}_{entry_index + 1}_{name}"
+                    fields[key] = (row_index, section, entry_index, name)
+    return fields
+
+
+def build_grounded_value_repair_request(
+    rows: list[dict], *, story_description: str, screenplay: str, issues: list[str],
+) -> tuple[str, str, dict[str, Any]]:
+    """Ask for enum literals only, keeping the complete authored film fixed."""
+    fields = invalid_grounded_value_fields(rows)
+    schema = {
+        "type": "object",
+        "properties": {
+            key: {"type": "string", "enum": [*GROUNDED_STATE_VALUES, "unresolved"]}
+            for key in fields
+        },
+        "required": list(fields),
+        "additionalProperties": False,
+    }
+    targets = {}
+    for key, (row_index, section, entry_index, name) in fields.items():
+        entry = rows[row_index]["physical_state"][section][entry_index]
+        targets[key] = {
+            "shot_index": row_index + 1, "section": section, "field": name,
+            "subject_id": entry.get("subject_id"), "invalid_value": entry[name],
+            "action": entry.get("action"),
+        }
+    anchors = []
+    for row_index, row in enumerate(rows):
+        state = row.get("physical_state")
+        if not isinstance(state, Mapping):
+            continue
+        for section in ("opening", "transitions", "closing"):
+            entries = state.get(section)
+            if not isinstance(entries, list):
+                continue
+            for entry_index, entry in enumerate(entries):
+                if not isinstance(entry, Mapping) or str(entry.get("predicate", "")).strip().casefold() != "grounded":
+                    continue
+                names = ("from_value", "to_value") if section == "transitions" else ("value",)
+                for name in names:
+                    value = entry.get(name)
+                    if isinstance(value, str) and value.strip().casefold() in GROUNDED_STATE_VALUES:
+                        anchors.append({
+                            "shot_index": row_index + 1, "section": section,
+                            "entry_index": entry_index + 1, "field": name,
+                            "subject_id": entry.get("subject_id"), "value": value,
+                        })
+    system = (
+        "Repair only invalid grounded-state enum values in an existing H3 shot plan. "
+        "Return only the requested JSON object, with exactly the supplied target keys. "
+        "Each value must be 'grounded', 'airborne', or 'unresolved'. Grounded means "
+        "on the ground or on a grounded support; airborne means flying or supported "
+        "by something airborne. Sitting, standing, astride and mounted are poses or "
+        "support descriptions, not grounded values. A seated rider on a flying mount "
+        "is airborne. Use the source, screenplay, authored blocking and transitions "
+        "to establish the state at that exact opening, transition endpoint or closing. "
+        "Preserve continuity with valid neighboring facts. Do not invent a takeoff, "
+        "landing, movement or new event. If context cannot establish the state, return "
+        "'unresolved'; Maestro will reject it rather than guess. Do not rewrite shots, "
+        "dialogue, cast, timing, action allocation or any other fields."
+    )
+    context = {
+        "source": story_description, "screenplay": screenplay,
+        "targets": targets, "fixed_grounded_anchors": anchors,
+        "shots": [
+            {**_compact_row_context(row, index), "closing_blocking": row.get("closing_blocking")}
+            for index, row in enumerate(rows)
+        ],
+        "validation_issues": issues,
+    }
+    return system, "REPAIR CONTEXT:\n" + json.dumps(context, ensure_ascii=False), schema
+
+
+def apply_grounded_value_patch(rows: list[dict], proposal: dict) -> list[dict]:
+    """Atomically replace only the invalid literals selected by the caller."""
+    fields = invalid_grounded_value_fields(rows)
+    if not isinstance(proposal, Mapping) or set(proposal) != set(fields):
+        raise ValueError("grounded-state repair must supply exactly the requested target keys")
+    for key, value in proposal.items():
+        if not isinstance(value, str) or value not in GROUNDED_STATE_VALUES:
+            raise ValueError(f"grounded-state repair target {key} remains unresolved or invalid")
+    repaired = copy.deepcopy(rows)
+    for key, (row_index, section, entry_index, name) in fields.items():
+        repaired[row_index]["physical_state"][section][entry_index][name] = proposal[key]
+    return repaired
+
+
 def _compact_row_context(row: Mapping[str, Any], index: int) -> dict[str, Any]:
     subjects = row.get("subjects_on_screen")
     cast = []
@@ -661,8 +779,19 @@ def build_compact_source_physical_repair_request(
         + " characters and transition actions concise. Put narrative motion only "
         "in action; do not place event narration in a fact value.\n"
         "- Keep support, contact, posture, location, grounded, and prop distinct. "
-        "For grounded, the only valid values are exactly 'grounded' or 'airborne'. "
-        "'astride' and 'mounted' are support descriptions, never grounded values.\n"
+        "Use support only for what bears or carries an actor; contact only for "
+        "actual touch or grip; posture for body pose; location for place or "
+        "proximity. Being beside or next to, approaching, noticing, or waving "
+        "beside another subject does not alone establish contact. Do not infer "
+        "contact as an opening fact from proximity; add it only when the exact "
+        "source action explicitly supports touch or grip. For grounded, the only "
+        "valid values are exactly 'grounded' or 'airborne'. 'astride' and "
+        "'mounted' are support descriptions, never grounded values.\n"
+        "- Walking is motion, not a support relation. Never invent placeholder "
+        "support values such as 'N/A'. Update an already-known location or posture "
+        "fact only when the source supports that change; otherwise leave that "
+        "event's transition list empty and keep its action in the immutable source "
+        "event. Do not add missing opening facts.\n"
         "- Facts flow from initial_facts through each ordered transition. A "
         "transition's from_value is copied from the current fact and its to_value "
         "becomes the next current fact. The caller derives complete row openings "

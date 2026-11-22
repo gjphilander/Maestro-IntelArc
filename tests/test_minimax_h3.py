@@ -330,6 +330,13 @@ def _load_llm_enhance_helpers():
         "_detect_h3_dialogue_language",
         "_h3_quote_is_visible_text",
         "_extract_h3_source_dialogue_entries",
+        "_h3_explicit_cast_speakers",
+        "_h3_explicit_cast_section_spans",
+        "_canonicalize_h3_source_cast_markers",
+        "_h3_source_speaker_marker_match_for_dialogue",
+        "_h3_source_speaker_marker_for_dialogue",
+        "_h3_ref2va_scene_subject_ids",
+        "_extract_h3_ref2va_audio_sections",
         "_h3_ref2va_subject_speaker_map",
         "_extract_h3_quoted_dialogue",
         "_h3_requests_speech",
@@ -338,6 +345,8 @@ def _load_llm_enhance_helpers():
         "_h3_dialogue_schedule",
         "_build_h3_timed_silence_clause",
         "_build_h3_dialogue_requirement",
+        "_h3_dialogue_comparison_text",
+        "_h3_dialogue_words_pattern",
         "_h3_dialogue_contract_satisfied",
         "_h3_timed_silence_contract_satisfied",
         "_h3_ref2va_reference_rows",
@@ -426,6 +435,9 @@ class TestMiniMaxH3Definition(unittest.TestCase):
                 "minimax_h3_ref2va_full",
                 "minimax_h3_voice_audio",
                 "viggle_animate",
+                "viggle_remake_swap",
+                "viggle_remake_edit",
+                "minimax_h3_regenerate_ic",
             ],
         )
         self.assertEqual((model_def["fps"], model_def["frames_minimum"]), (24, 124))
@@ -520,7 +532,7 @@ class TestMiniMaxH3Definition(unittest.TestCase):
         self.assertEqual(model_def["minimax_h3_text_encoder_default"], "nvfp4_awq")
         self.assertEqual(
             set(model_def["minimax_h3_text_encoder_variants"]),
-            {"nvfp4_awq", "gguf_q2_k", "gguf_q4_k_m", "int8", "bf16"},
+            {"nvfp4_awq", "gguf_q2_k", "gguf_q4_k_m", "int8", "bf16", "distilled_4b"},
         )
         self.assertEqual(
             model_def["compatible_model_paths"][
@@ -759,6 +771,14 @@ class TestMiniMaxH3Definition(unittest.TestCase):
             self.assertEqual(presets["1080p"]["values"]["9:16"], "1088x1920")
             self.assertEqual(presets["1080p"]["values"]["4:3"], "1440x1088")
             self.assertEqual(presets["1080p"]["values"]["3:4"], "1088x1440")
+
+    def test_source_bound_settings_keep_exact_duration_and_finish_canvas(self):
+        for model_type in ("viggle_remake_edit", "viggle_remake_swap", "minimax_h3_regenerate_ic"):
+            with self.subTest(model_type=model_type):
+                model_def = self.handler.query_model_def(model_type, {})
+                settings = {"video_length": 99, "resolution": "2560x1440"}
+                self.handler.fix_settings(model_type, 2.58, model_def, settings)
+                self.assertEqual(settings, {"video_length": 99, "resolution": "2560x1440"})
 
     def test_old_generic_resolutions_snap_without_changing_orientation(self):
         normalize = _load_source_function(
@@ -1098,6 +1118,37 @@ class TestMiniMaxH3Definition(unittest.TestCase):
         self.assertIn("VRAM-aware default", duration_slider)
         self.assertIn("manually raise the native pass", duration_slider)
 
+    def test_native_omni_memory_policy_without_gpu_preserves_auto_requests(self):
+        apply_policy = _load_h3_memory_helpers()[
+            "apply_h3_native_omni_memory_policy"
+        ]
+        model_def = {
+            "architecture": "minimax_h3_ref2va",
+            "omni_reference": True,
+        }
+        request = {
+            "resolution": "704x1280",
+            "video_length": 345,
+            "sliding_window_size": 158,
+        }
+        before = dict(request)
+
+        self.assertIsNone(
+            apply_policy(request, model_def, {"gpu_vram_gb": 0})
+        )
+        self.assertEqual(request, before)
+
+        pika_request = {
+            **request,
+            "minimax_h3_reference_sequence": False,
+        }
+        pika_before = dict(pika_request)
+        pika_model_def = {**model_def, "minimax_h3_pika_flex": True}
+        self.assertIsNone(
+            apply_policy(pika_request, pika_model_def, {"gpu_vram_gb": 0})
+        )
+        self.assertEqual(pika_request, pika_before)
+
     def test_full_h3_preflight_recommends_pruned_turbo_without_blocking(self):
         preflight = _load_h3_memory_helpers()["h3_runtime_preflight"]
         full_first_last = {
@@ -1299,6 +1350,93 @@ class TestMiniMaxH3Definition(unittest.TestCase):
             "model.lm_head.weight",
         )
 
+    def test_conditioner_namespaces_normalize_wrapped_qwen_aliases_together(self):
+        normalize = _load_source_function(
+            _MAIN_PATH,
+            "_normalize_conditioner_checkpoint_namespaces",
+        )
+        state, quantization, tied = normalize(
+            {
+                "model.language_model.embed_tokens.weight": "same embedding",
+                "model.embed_tokens.weight": "same embedding",
+                "model.visual.patch_embed.proj.weight": "vision",
+                "text_encoder.model.language_model.layers.0.weight": "wrapped",
+                "text_encoder.model.visual.proj.weight": "wrapped vision",
+                "model.layers.1.mlp.up_proj.weight": "canonical",
+            },
+            {
+                "model.language_model.layers.0.self_attn.q_proj": {"weights": "int8", "activations": None},
+                "text_encoder.language_model.layers.0.self_attn.q_proj": {"weights": "int8", "activations": None},
+            },
+            {
+                "model.language_model.embed_tokens.weight": [
+                    "model.language_model.lm_head.weight"
+                ],
+                "text_encoder.language_model.embed_tokens.weight": [
+                    "language_model.lm_head.weight"
+                ],
+            },
+        )
+
+        self.assertEqual(state["model.embed_tokens.weight"], "same embedding")
+        self.assertEqual(state["visual.patch_embed.proj.weight"], "vision")
+        self.assertEqual(
+            state["model.layers.0.weight"],
+            "wrapped",
+        )
+        self.assertEqual(state["visual.proj.weight"], "wrapped vision")
+        self.assertEqual(state["model.layers.1.mlp.up_proj.weight"], "canonical")
+        self.assertEqual(len(state), 5)
+        self.assertEqual(
+            quantization,
+            {"model.layers.0.self_attn.q_proj": {"weights": "int8", "activations": None}},
+        )
+        self.assertEqual(
+            tied,
+            {
+                "model.embed_tokens.weight": ["model.lm_head.weight"],
+            },
+        )
+
+    def test_conditioner_namespace_collisions_raise_without_comparing_tensors(self):
+        normalize = _load_source_function(
+            _MAIN_PATH,
+            "_normalize_conditioner_checkpoint_namespaces",
+        )
+
+        class TensorLike:
+            def __eq__(self, other):
+                raise AssertionError("collision handling compared tensor contents")
+
+        with self.assertRaisesRegex(ValueError, "state_dict.*model.weight"):
+            normalize(
+                {
+                    "model.language_model.weight": TensorLike(),
+                    "model.weight": TensorLike(),
+                }
+            )
+
+        with self.assertRaisesRegex(ValueError, "quantization_map"):
+            normalize(
+                {},
+                {
+                    "model.language_model.proj": "int8",
+                    "model.proj": "fp8",
+                },
+            )
+
+        with self.assertRaisesRegex(ValueError, "tied_weights_map"):
+            normalize(
+                {},
+                None,
+                {
+                    "model.language_model.embed_tokens.weight": [
+                        "model.language_model.lm_head.weight"
+                    ],
+                    "model.embed_tokens.weight": ["model.output.weight"],
+                },
+            )
+
     def test_h3_resolution_and_encoder_capabilities_reach_the_ui_and_backend(self):
         launch = _read(_LAUNCH_PATH)
         wgp = _read(_WGP_PATH)
@@ -1312,7 +1450,7 @@ class TestMiniMaxH3Definition(unittest.TestCase):
         self.assertIn("elif minimax_h3_references:", wgp)
         self.assertIn("_h3_auto_budgets", wgp)
         self.assertIn("_h3_auto_fallbacks", wgp)
-        self.assertIn("resolveResolution(get().modelOptions, preset, ratio)", store)
+        self.assertIn("resolveResolution(state.modelOptions, preset, ratio)", store)
         self.assertIn("findResolutionSelection(res, get().modelOptions)", store)
         self.assertIn("modelOptions?.resolution_preset_order", presets)
         self.assertNotIn("value !== '768p'", director)
@@ -2641,7 +2779,9 @@ class TestMiniMaxH3RuntimeSource(unittest.TestCase):
         self.assertIn('"keep_all_latents": True', main)
         self.assertIn("_encode_continuation_audio", main)
         self.assertIn("continuation_picture", main)
-        self.assertIn("add_ref2va_continuation_context", main)
+        self.assertIn("compile_ref2va_prompt_handoff(", main)
+        handoff = _read(_APP / "models" / "minimax_h3" / "reference_handoff.py")
+        self.assertIn("runtime_prompt = add_ref2va_continuation_context(runtime_prompt)", handoff)
         self.assertIn("keyframe_anchors=anchors", main)
         self.assertIn("audio_condition_anchors=audio_anchors", main)
         self.assertIn("pre_audio_guide_sample_rate", wgp)
@@ -3142,7 +3282,7 @@ class TestMiniMaxH3RuntimeSource(unittest.TestCase):
         conditioner = _read(_CONDITIONER_PATH)
         checkpoint = _read(_CHECKPOINT_PATH)
         self.assertIn("_normalize_conditioner_checkpoint_namespaces", main)
-        self.assertIn('if variant == "nvfp4_awq":', main)
+        self.assertIn('if variant == "nvfp4_awq" or distilled:', main)
         self.assertIn("state_dict = preprocess_conditioner_state_dict(state_dict)", main)
         self.assertIn("preprocess_sd=preprocess_checkpoint", main)
         self.assertIn("consumer_quantized=variant == \"nvfp4_awq\"", main)

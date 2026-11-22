@@ -19,7 +19,7 @@ from typing import Any, Callable
 
 from models.minimax_h3.speakers import is_h3_production_label
 from services.h3_performance_audio import (
-    PERFORMANCE_AUDIO_GUIDANCE,
+    performance_audio_guidance,
     discover_h3_requested_static_holds,
     has_h3_performance_audio,
     performance_audio_window_guidance,
@@ -455,18 +455,75 @@ _STYLE_WORD_RE = re.compile(
     flags=re.IGNORECASE,
 )
 def normalize_h3_dialogue_tags(value: Any) -> str:
-    """Repair harmless whitespace in user-authored ``<d>`` tags.
+    """Normalize ``<d>`` tags and repair one unambiguous terminal duplicate.
 
     Mobile keyboards and pasted prompts commonly produce ``< d>`` or
     ``< / d >``.  MiniMax understands only the canonical spelling, and the
     story ledger must recognize the line before it removes dialogue from the
     visual event stream.  Normalize only the tag delimiters; spoken words are
-    left byte-for-byte unchanged.
+    left byte-for-byte unchanged. A final repeated opener is treated as the
+    closing delimiter only when the preceding tag stream is balanced, the two
+    openers share one plain-text line, and the duplicate is followed only by
+    EOF or blank-separated native audio fields.
     """
 
     text = str(value or "")
     text = re.sub(r"<\s*d\s*>", "<d>", text, flags=re.IGNORECASE)
-    return re.sub(r"<\s*/\s*d\s*>", "</d>", text, flags=re.IGNORECASE)
+    text = re.sub(r"<\s*/\s*d\s*>", "</d>", text, flags=re.IGNORECASE)
+
+    tags = list(re.finditer(r"</?d>", text, flags=re.IGNORECASE))
+    if len(tags) < 2:
+        return text
+
+    first, duplicate = tags[-2:]
+    if first.group(0).casefold() != "<d>" or duplicate.group(0).casefold() != "<d>":
+        return text
+
+    # The prefix must be a sequence of complete, non-nested dialogue blocks.
+    depth = 0
+    for tag in tags[:-2]:
+        if tag.group(0).casefold() == "<d>":
+            if depth:
+                return text
+            depth = 1
+        else:
+            if not depth:
+                return text
+            depth = 0
+    if depth:
+        return text
+
+    body = text[first.end():duplicate.start()]
+    if not body.strip() or any(char in body for char in "\r\n<>"):
+        return text
+
+    suffix = text[duplicate.end():]
+    if suffix.strip():
+        # Audio fields can follow the last authored line in a prompt, but only
+        # after a blank line and only when every remaining nonempty line is a
+        # native H3 audio field. Any later markup keeps the case ambiguous.
+        separator = re.match(r"\r?\n[ \t]*\r?\n", suffix)
+        if separator is None:
+            return text
+        field_text = suffix[separator.end():]
+        if re.search(r"<[^>]*>", field_text):
+            return text
+        field_names = []
+        for line in field_text.splitlines():
+            if not line.strip():
+                continue
+            field = re.fullmatch(
+                r"[ \t]*(overall_soundscape|non_diegetic_music)\s*:.*",
+                line,
+                flags=re.IGNORECASE,
+            )
+            if field is None:
+                return text
+            field_names.append(field.group(1).casefold())
+        if not field_names or len(field_names) > 2 or len(set(field_names)) != len(field_names):
+            return text
+
+    return text[:duplicate.start()] + "</d>" + text[duplicate.end():]
 
 
 def _is_style_only_fragment(value: str) -> bool:
@@ -13272,6 +13329,7 @@ def plan_h3_story_segments(
     llm_generate: Callable[..., str] | None = None,
     lora_system_hint: str = "",
     resume: dict | None = None,
+    source_audio_context_windows: list[str] | None = None,
 ) -> dict[str, Any]:
     """Create a compact ledger and expand one validated local segment at a time."""
 
@@ -13294,6 +13352,7 @@ def plan_h3_story_segments(
             image_reference_roles=image_reference_roles,
             nsfw=nsfw, llm_generate=generate,
             fidelity_retries=retry_limit,
+            source_audio_context_windows=source_audio_context_windows,
         )
         return _render_h3_story_segments(
             context, generate=generate, resume=resume,
@@ -13316,6 +13375,7 @@ def _prepare_h3_story_context(
     llm_generate: Callable[..., str] | None,
     image_reference_roles: list[dict[str, Any]] | None = None,
     fidelity_retries: int = 1,
+    source_audio_context_windows: list[str] | None = None,
 ) -> dict[str, Any]:
     from services import llm_service
 
@@ -13372,12 +13432,17 @@ def _prepare_h3_story_context(
     planning_diagnostics: list[str] = []
     planning_notes: list[str] = []
     if not start_frame_supplied and image_reference_roles:
+        original_reference_context = reference_context
         from services.h3_reference_scope import prepare_scoped_reference_context
         scoped = prepare_scoped_reference_context(
             generate, prompt, reference_context, image_paths, image_reference_roles,
         )
         if scoped["scoped"]:
             reference_context = scoped["context"]
+            if source_audio_context_windows and "SOURCE_AUDIO_TRANSCRIPT_CONTEXT" not in reference_context:
+                marker = original_reference_context.find("SOURCE_AUDIO_TRANSCRIPT_CONTEXT")
+                if marker >= 0:
+                    reference_context += "\n\n" + original_reference_context[marker:]
             image_paths = scoped["image_paths"]
             if scoped.get("warning"):
                 planning_warnings.append(scoped["warning"])
@@ -13654,8 +13719,8 @@ def _prepare_h3_story_context(
         from services.adaptive_enhancement import adaptive_writing_guide
         ledger_guide += "\n\n" + adaptive_writing_guide(prompt)
     if audio_driven:
-        ledger_guide += "\n\n" + PERFORMANCE_AUDIO_GUIDANCE
-        ledger_prompt += "\n\n" + PERFORMANCE_AUDIO_GUIDANCE
+        ledger_guide += "\n\n" + performance_audio_guidance(reference_context)
+        ledger_prompt += "\n\n" + performance_audio_guidance(reference_context)
         if performance_clock:
             ledger_prompt += "\n\nEXACT AUDIO / VISUAL WINDOW CLOCK:\n" + "\n".join(performance_clock)
     ledger_schema = (
@@ -14183,6 +14248,7 @@ def _prepare_h3_story_context(
         )
     return {
         "action_first": action_first,
+        "source_audio_context_windows": list(source_audio_context_windows or []),
         "allow_generated_dialogue": allow_generated_dialogue,
         "camera_coverage": camera_coverage,
         "catalog": catalog,
@@ -14258,7 +14324,9 @@ def _render_h3_story_segments(
         from services.adaptive_enhancement import adaptive_writing_guide
         segment_guide += "\n\n" + adaptive_writing_guide(prompt)
     if audio_driven:
-        segment_guide += "\n\n" + PERFORMANCE_AUDIO_GUIDANCE
+        segment_guide += "\n\n" + performance_audio_guidance(
+            "SOURCE_AUDIO_TRANSCRIPT_CONTEXT" if context.get("source_audio_context_windows") else "",
+        )
     cast_names = list(source_intent.get("cast_names") or [])
     dialogue_by_id = {
         str(item.get("dialogue_id") or "").upper(): item
@@ -14895,7 +14963,12 @@ def _render_h3_story_segments(
                 + (f"Required visible ending: {ledger.get('required_final_outcome')}." if segment_number == segment_count else "")
             )
         if audio_driven:
-            segment_prompt += "\n\n" + PERFORMANCE_AUDIO_GUIDANCE
+            segment_prompt += "\n\n" + performance_audio_guidance(
+                "SOURCE_AUDIO_TRANSCRIPT_CONTEXT" if context.get("source_audio_context_windows") else "",
+            )
+            audio_context_windows = context.get("source_audio_context_windows") or []
+            if index < len(audio_context_windows):
+                segment_prompt += "\n\nMATCHING SOURCE AUDIO CONTEXT:\n" + audio_context_windows[index]
             performance_clock = context.get("performance_audio_clock") or []
             if index < len(performance_clock):
                 segment_prompt += "\n\n" + performance_clock[index]

@@ -1,19 +1,26 @@
 # Maestro - Intel Arc XPU GPUs
 
+[Windows standalone startup and migration guide](docs/Intel-Arc-Standalone.md)
+
+
 A one-click local AI **creative studio, director, and video editor** for creators. Maestro combines a modern interface with powerful image, video, and audio generation, an LLM-directed production workflow, and a non-destructive multi-track editor. Supports NVIDIA CUDA GPUs and experimental **Intel Arc XPU GPUs**, including the Arc Pro B70. Optimized for LTX-2.5, MiniMax H3, and the latest local creative models and LoRAs.
 
-To install this branch in Pinokio, go to the "pinokio\api" folder, open the command prompt, and run the command:
+To install this fork, open a terminal in your Pinokio home's `api` folder and clone its `main` branch:
 
+```bat
 git clone -b main --single-branch https://github.com/gjphilander/Maestro-IntelArc
+```
 
-After successfull install with pinokio, **Maestro** can be run directly in the browser by going to "pinokio\api\Maestro.git" and double clicking **start-maestro.bat**., or you can still run it from within Pinokio.
+Open the cloned app in Pinokio and run **Install**. After installation, double-click **start-maestro.bat** in the repository folder to launch independently of Pinokio. It opens the WebUI in your default browser once the server responds, using the actual startup port. You can also start Maestro from Pinokio.
 
-![Maestro v3.2.5 Studio with image references and a generated video](docs/images/maestro-ui-october-2026.png)
+![Maestro v4 Studio in Graphite Dark with an experimental Pika H3 Flex video](docs/images/maestro-ui-october-2026.png)
 
-## Maestro Video Compressor added.
+## Video Compressor
+
 ![Maestro v3.2.5 Studio with image references and a generated video](docs/images/compress-ui-november-2026.png)
 
-## Maestro PROMPT generator added. (Ollama must be installed)
+## Video Prompt Chat with Ollama
+
 ![Maestro v3.2.5 Studio with image references and a generated video](docs/images/chat-ui-november-2026.png)
 
 [Features](#what-it-does) · [Install](#install) · [Updates](#updates) · [Guides](docs/README.md) · [Full update history](docs/UPDATE_HISTORY.md)
@@ -28,11 +35,14 @@ Create with **Studio**, plan a production with **Director**, and finish it in th
 - **Studio — video, images and audio.** Generate from text or references; animate, extend, blend and edit video; create and edit images; or make music, speech, cloned voices and sound effects. Queue jobs, enhance prompts and adjust model-specific controls. Models include MiniMax H3, LTX, Flux, Qwen, MOSS and Fish Audio. [Studio guide](docs/Studio-controls.md).
 - **Editor — finish on a timeline.** Arrange video, audio and titles with trimming, transitions, speed, volume and canvas controls. Bring in a Director production or gallery clips, send a shot back through AI generation, and export the finished edit.
 - **Compress generated videos.** Make a smaller H.264 MP4 copy of a video in an output workspace. Choose quality and encoding speed, and optionally replace an MP4 original after compression succeeds.
+- **Combine clips.** Select at least two output videos in playback order and save a joined MP4 in the active workspace. FFmpeg normalizes frame size, frame rate and audio before joining them.
 
 ### Keep control of your creative workflow
 
 - **Reusable characters and references.** Save and share characters with appearance references and optional voices. Combine image, video and audio references in supported workflows to guide identity, action and sound. [Characters and RefMods](docs/Maestro-Characters.md).
 - **Built-in AI writing.** Local language and vision models help develop prompts and plan productions, with models downloaded on first use. Optional external providers include OpenAI, Anthropic and compatible local endpoints such as LM Studio. [Local AI guide](docs/LLM-runtime.md).
+- **Connect your AI agent.** Built-in MCP lets compatible agents discover capabilities, write model-aware prompts, use saved references, submit Studio and Director work, and manage projects. Use Local MCP on the Maestro computer or optional authenticated Tailscale access from another computer. [Agent Access setup](docs/Agent-Access.md).
+- **Bring your ComfyUI setup.** Reuse configured model folders, import and validate API workflows, or map supported Maestro requests to an existing ComfyUI server. The integration is optional and off by default; ComfyUI and its custom nodes remain separately managed. [ComfyUI guide](docs/ComfyUI.md).
 - **Ollama video-prompt chat.** Chat with a model running in Ollama to brainstorm scenes, camera moves and complete video prompts. Copy a reply or send it directly to Studio. Conversations are saved in your browser.
 - **Speak into chat.** In Video Prompt Chat, click the microphone beside the message box and allow microphone access. Speak, then click Stop: recognised words are appended to your draft, ready to edit and send. Partial words appear beneath the box while listening. Dictation stops when you leave the chat or switch conversations. Use Chrome or Edge on localhost or HTTPS; Pinokio's embedded browser may not provide a speech service. Browser dictation may require internet and send audio to the browser's speech provider, independently of your local Ollama model. No additional API key is required. Speech uses your browser's language. If permission is blocked, enable the microphone in the browser's site settings and retry.
 - **Models and LoRAs in one place.** Browse compatible CivitAI LoRAs and community checkpoints, manage downloads and updates, and use prompting guides and recommended strengths. [H3 checkpoint imports](docs/H3-checkpoint-import.md).
@@ -43,7 +53,7 @@ Create with **Studio**, plan a production with **Director**, and finish it in th
 
 ## Intel Arc (XPU) support
 
-Maestro includes an experimental Intel PyTorch XPU runtime path for Windows and Linux. Use a current [Intel Arc Pro B70 driver](https://www.intel.com/content/www/us/en/products/sku/245797/intel-arc-pro-b70-graphics/downloads.html) that includes the compute runtime and Level Zero support. For Linux, follow Intel's [oneAPI GPU driver installation guidance](https://www.intel.com/content/www/us/en/docs/oneapi-toolkit/installation-guide-linux/latest/overview.html); installations also need access to the DRM render device (`/dev/dri/renderD*`). Windows Arc support has not been validated on a Maestro B70 system yet.
+Maestro includes an experimental Intel PyTorch XPU runtime path for Windows and Linux. Use a current [Intel Arc Pro B70 driver](https://www.intel.com/content/www/us/en/products/sku/245797/intel-arc-pro-b70-graphics/downloads.html) that includes the compute runtime and Level Zero support. For Linux, follow Intel's [oneAPI GPU driver installation guidance](https://www.intel.com/content/www/us/en/docs/oneapi-toolkit/installation-guide-linux/latest/overview.html); installations also need access to the DRM render device (`/dev/dri/renderD*`). Selected H3 Fused 4-Step and LTX-2.5 Distilled paths have been exercised locally on Windows with an Arc Pro B70 and 64 GB system RAM. Compatibility still varies by workflow. Linux XPU generation remains unverified in this fork's local testing.
 
 In Pinokio, select the Intel Arc device when it is detected. If Pinokio does not identify it, add `MAESTRO_DEVICE=xpu` to Pinokio's global `ENVIRONMENT` file and restart Pinokio before Install; the launcher's device gate cannot read the app-local environment file. When NVIDIA is detected, Maestro keeps the CUDA profile. The installer creates `app/env-xpu` with the version-matched official PyTorch 2.11.0, TorchVision 0.26.0, and TorchAudio 2.11.0 XPU wheels, then runs a matmul and SDPA preflight. Start repeats the preflight before launching the backend. The system report detects XPU name, VRAM, and memory allocated by Maestro; Auto-Tune can use the detected XPU VRAM when enabled. On a 32-GB B70 with 32-GB system RAM, Auto-Tune recommends the low-RAM/high-VRAM profile 3. A manually selected profile 1 can pin too much model data into system RAM. The defaults `ONEAPI_DEVICE_SELECTOR=level_zero:gpu`, `SYCL_CACHE_PERSISTENT=1`, and `PYTORCH_ENABLE_XPU_FALLBACK=1` can be overridden in the Pinokio environment.
 
@@ -51,11 +61,25 @@ Local prompt enhancement uses llama.cpp's official SYCL runtime on XPU, stored s
 
 On XPU startup, Maestro disables local-memory overcommit on Windows and limits PyTorch's XPU allocator to 90% of device memory by default; set `MAESTRO_XPU_MEMORY_FRACTION` to a value in `(0, 1]` to change the limit. XPU workloads also cap MMGP's reserved host RAM at 20% by default so Level Zero has system memory for transfers. This can slow model swaps; override it in System Settings → Reserved RAM or with MMGP's `perc_reserved_mem_max` environment variable. Level Zero immediate command lists are off by default because, although PyTorch lists them as a workaround for some Arc command submission errors, Windows video workloads have also reported repeated-generation failures with this option. To try that workaround, set `MAESTRO_XPU_IMMEDIATE_COMMANDLISTS=1` before launching Maestro. `UR_RESULT_ERROR_OUT_OF_RESOURCES` can also indicate a faulty kernel or driver issue. After this fatal error, Maestro skips XPU teardown and blocks another generation; close Maestro normally and restart before retrying. Maestro saves the model name, environment flags, available system RAM, and full traceback to `logs/xpu/failure-*.log` without querying the failed XPU context. Set `MAESTRO_XPU_DEBUG_SYNC=1` to enable slower synchronous kernel debugging and make asynchronous kernel failures appear closer to the operation that caused them. For a detailed runtime trace, also set `SYCL_UR_TRACE=2` before launch; the trace can be large, so capture only one failing run.
 
-This runtime path is experimental: some model kernels and offload optimizations remain CUDA-specific, so XPU may use more system RAM or run more slowly. MMGP uses direct synchronous weight transfers on XPU instead of its CUDA-oriented pinned staging path; this avoids a known XPU transfer failure but can reduce transfer speed. The preflight confirms the Intel driver and PyTorch XPU runtime work; it does not certify every Maestro model or feature on XPU. CUDA Graphs, Triton/Sol, SageAttention, FlashAttention, Nunchaku/NVFP4, MMGP's CUDA allocator, and CUDA GGUF/WGP kernels are NVIDIA-only and are skipped or unavailable on XPU. GGUF uses a slower PyTorch fallback that follows the selected device, including XPU; the H3 GGUF vision tower uses FP16 autocast on XPU. ONNX Runtime uses its CPU package on XPU. If the backend reports a CUDA-only operation, that model path is not yet supported on XPU and should be run on NVIDIA or CPU where available. Allow active generation to finish before stopping Maestro; do not force-kill XPU workloads.
+### XPU memory and render performance
+
+On XPU systems with at least 24 GB VRAM and 60 GB reported system RAM, H3 Auto placement uses its workload-derived transformer residency budget. Eligible H3 Fused jobs preload transformer blocks synchronously into VRAM, reserving space for streamed blocks and attention workspaces. Native LTX-2.5 Distilled also supports this preload path within its existing profile budget. Automatic host pinning is disabled for these paths when reserved RAM is left at its XPU default. Explicit reserved-RAM choices take precedence.
+
+These paths batch direct weight copies within each block and synchronize at the block boundary. Set `MAESTRO_XPU_BATCH_WEIGHT_COPIES=0` before startup to restore individual blocking copies while retaining block residency. Render time depends on window length, reference count, resolution and decoding settings. Restart Maestro after updating runtime code.
+
+The Reserved RAM setting limits model pinning. Total system RAM use also includes pageable weights, reference media, runtime buffers and other applications, so it can exceed the selected pinning percentage. Monitor RAM and VRAM during a complete render when comparing settings.
+
+### XPU attention and limitations
+
+Startup reports the Intel GPU and **native PyTorch XPU SDPA** attention backend. The CUDA optional-kernel audit is skipped on XPU. The two known import warnings from Diffusers Kandinsky CUDA autocast decorators and FLA's unsupported Triton platform check are narrowly filtered. Optional FLA kernels can still use CPU fallbacks on Windows.
+
+The preflight checks the driver and PyTorch XPU runtime with matmul and SDPA operations. Model support remains experimental. Maestro's CUDA Graphs, Sol/SageAttention/FlashAttention integrations, Nunchaku/NVFP4, CUDA allocator and CUDA GGUF/WGP kernels are unavailable on XPU. GGUF uses its PyTorch device fallback. The H3 GGUF vision tower uses FP16 autocast on XPU, and ONNX Runtime uses its CPU package. Allow active generation to finish before stopping Maestro and close it gracefully.
+
+### XPU troubleshooting
 
 If preflight fails, update the Intel Arc driver, confirm the Level Zero runtime sees the GPU, then check that `torch.__version__` includes `+xpu` and `torch.xpu.is_available()` is true. On Linux, check render-node permissions and use `ONEAPI_DEVICE_SELECTOR=level_zero:0` to select a specific card. On Windows, install the current Intel Arc Pro driver and restart Pinokio after driver installation.
 
-To verify on an Arc Pro B70, run `python scripts/xpu_preflight.py` from `app/env-xpu` through Pinokio's terminal, then start Maestro and confirm the preflight passes before trying a model. Exercise image, video, audio, preprocessing, and editor workflows separately; support varies by model. Report the model, driver version, PyTorch version, and the first failing traceback when a path reaches a CUDA-only operation.
+To verify on an Arc Pro B70, run `python scripts/xpu_preflight.py` from the `app` directory with `env-xpu` activated in Pinokio's terminal. On Windows, you can also run `env-xpu\Scripts\python.exe scripts\xpu_preflight.py` from `app`. Start Maestro and confirm the preflight passes before trying a model. Exercise image, video, audio, preprocessing, and editor workflows separately; support varies by model. Report the model, driver version, PyTorch version, and the first failing traceback when a path reaches a CUDA-only operation.
 
 Available inputs, editing tools and acceleration depend on the selected model and hardware. See the [guides and model details](docs/README.md) for workflows, setup and model-specific licenses.
 
@@ -88,6 +112,69 @@ The version you are running is shown next to the Maestro title in the UI. To upd
 Runtime upgrades are explicit menu actions. A missing performance-runtime marker
 does not automatically run Update when you open the launcher. If offered,
 **Start with Compatibility Runtime** keeps the existing runtime available.
+
+### v4.1.1 (2026-11-10)
+
+- **H3 Image memory fix:** Auto-Tune streams model weights for reference-heavy jobs to free VRAM for the requested canvas and references.
+- **MiniMax H3 Image (Experimental):** six-step text-to-image and editing with up to 16 ordered references, with native 1K, 2K and 4K canvases.
+- **Agent-led filmmaking:** exact-text title cards, optional Director opening/end cards and intertitles, editable finishing with narration/music/effects, and actual-media review with bounded selected-take polishing.
+- **Video workflows and finishing:** H3 Remake, Regenerate 2K, new H3 accelerators, Director final takes and RelayVSR 2× upscaling.
+- **Reliability and experiments:** PDD BF16 compatibility, Director action validation, H3 reference handoff diagnostics, restored MCP clip durations and experimental Pika 4–12 step controls.
+
+Maestro v4.1.1 is available on **Main and Dev**. See the [v4.1 release notes](docs/RELEASE_NOTES_V4.1.0.md) and [agent filmmaking guide](docs/Agent-Filmmaking.md) for usage and limits.
+
+### v4.0.0 (2026-11-04)
+
+Maestro v4.0.0 is available on **Main and Dev**.
+
+- **An upgraded Editor and animated titles:** a fuller editing workspace,
+  reviewable Auto-edit plans with undo, chroma key and transparent ProRes 4444
+  MOV export. Describe animated titles directly in Studio or the Editor.
+- **Pika H3 Flex:** experimental Frames and References generation, source-audio
+  conditioning, SLA with a compatibility fallback, and motion/audio sliding
+  windows. Five resolution tiers include experimental 1080p; saved window
+  choices survive settings reuse and resolution changes.
+- **Built-in MCP:** independent local and remote connections, scoped approval,
+  model-aware authoring guides, saved characters and externally authored
+  music-video plans with native song analysis. Existing browser access stays
+  available.
+- **Optional ComfyUI integration:** reuse model folders, import typed API
+  workflows and route supported native or Director requests through an existing
+  ComfyUI server. Nothing is enabled or installed automatically.
+- **A fresh appearance:** first opening v4 switches to Graphite Studio in Dark
+  mode once. Choose another theme afterward and that choice stays saved.
+  Compact pinned controls, resizable thumbnails and mobile/startup recovery
+  make everyday use smoother.
+- **More creative models and finishing:** MOSS reference editors, Fibo 2.0,
+  Qwen reference caches, H3 accelerators/PTD/two-pass options and FlashVSR+ Turbo.
+  Worlds and Profile 0 remain optional experimental tools.
+- **More reliable writing and review:** clearer reference roles, exact dialogue
+  and speaker recovery, retained rejected drafts, Director planning fixes,
+  failed-job settings/LoRA details, Turbo LoRA filters and quieter logs.
+
+The existing Dev updates are included. See the
+[v4.0.0 release notes and testing limits](docs/RELEASE_NOTES_V4.0.0.md).
+
+### v3.3.0 (2026-10-26) — Dev testing
+
+- **Qwen Image 2.1 reference caching:** optional INT8 caches in VRAM or system
+  RAM, with memory guards and separate positive/negative guidance caches.
+  Disabled remains the default; RAM transfers can trade speed for lower VRAM.
+- **H3 LightX2V accelerators:** four new workflow-matched four/eight-step
+  presets, with pinned weights and their correct video sampling shifts.
+- **FlashVSR+ Turbo:** a separate upscaler in Post Processing, Tools and Editor.
+  Existing FlashVSR selections keep v1.1 and its original behavior.
+- **Optional kernel updates:** compatible WGPKernels 1.4.2 and GGUF CUDA
+  1.0.29 installers, with hash-pinned downloads and existing fallbacks.
+
+Available on **Dev for testing**; Main remains v3.2.5. Update the idle Dev
+installation in Pinokio, restart Maestro and refresh the browser. CPU tests
+and the UI build passed. Functional GPU checks now cover the RTX 4090, 12GB
+RTX 3080 Ti and 8GB RTX 5070 Laptop. Follow-up fixes restore v1.1 sparse
+attention and load the official Plus checkpoint names correctly; all 12 latest
+FlashVSR image/video checks passed. These bounded checks are not a matched
+speed or general quality benchmark. See the
+[v3.3.0 Dev release notes](docs/RELEASE_NOTES_V3.3.0.md).
 
 ### v3.2.5 (2026-10-24)
 
@@ -274,72 +361,12 @@ Use **Update** in Pinokio, restart Maestro and refresh the browser. Existing pro
 
 [Full v2.4.0 release notes and issue coverage](docs/RELEASE_NOTES_V2.4.0.md) · [Validation and remaining limits](docs/VALIDATION_V2.4.0.md) · [Changelog](CHANGELOG.md)
 
-### v2.3.0 (2026-09-20)
-
-**Qwen Image 2.1, automatic music training, and a redesigned music LoRA library**
-
-- **Qwen Image 2.1 7B:** generate and edit with the same model, combine up to ten references, use dedicated prompt enhancement, and save transparent PNGs. Includes memory offloading, tiled VAE processing and a separate selector for compatible LoRAs. [Image guide](docs/Qwen-Image-2.1.md).
-- **My Music Auto training:** upload recordings, choose training targets and let Maestro prepare the dataset, train voice/sound, then train song style in one queued workflow. Defaults to 100 voice/sound steps and 200 song-style steps, with stop/resume and further training available.
-- **Easier Guided training:** a clear recordings → voice/sound → song style → test-song workflow. Technical settings and alternate methods live in Expert settings. Matched tokenizer/decoder adaptation, checkpoint auditions and source-audio reconstruction help compare progress.
-- **Automatic dataset preparation:** separate vocals, transcribe lyrics, detect voices and suggest clips from full songs. Guided mode lets you review speakers, words and boundaries; Auto uses suggested clips. Check-only songs stay out of training. New projects recommend v9 while existing projects keep their assets.
-- **Music LoRAs in Advanced:** searchable checkboxes, individual strengths, automatic training triggers and an active-count badge. Choose which saved LoRAs appear in the selector, remove/restore library entries, import combined AI-Toolkit adapters, and experiment with multiple compatible LoRAs.
-- **Better YuE2 instrumentals and songwriting:** Instrumental automatically uses the dedicated instrumental LoRA and composition recipe. Songwriting preserves the requested vocalist, vocal delivery and training trigger more clearly. [Music and training guide](docs/YuE2-music.md).
-- **Experimental H3 clips up to 30 seconds:** opt in from Studio's Duration settings for Frames and References, including queued enhancement. Auto retains its normal GPU recommendations; Animate keeps its existing window length.
-- **No replayed job notifications:** opening Maestro or reconnecting no longer shows completion/failure popups from old Studio and Director history. Jobs that finish while connected still notify normally.
-
-My Music training, multi-LoRA mixing and extended H3 duration remain experimental. Vocal likeness and per-section voice switching are not guaranteed. Qwen Image 2.1 uses a research/evaluation license; commercial use needs a separate Qwen license.
-
-Use **Update** in Pinokio, restart Maestro and refresh the browser. Existing models, recordings, projects, LoRAs and outputs stay in place. New models and optional tools download their assets when first used.
-
-[Full v2.3.0 release notes](docs/RELEASE_NOTES_V2.3.0.md) · [Validation and limits](docs/VALIDATION_V2.3.0.md) · [Changelog](CHANGELOG.md)
-
-### v2.2.4 (2026-09-18)
-
-**Unified AI enhancement, YuE2 music, and more control over Director productions**
-
-Includes the full v2.2.0 feature release and v2.2.1–v2.2.3 fixes below. **New in v2.2.4:** retry flagged H3 windows without rewriting the accepted prompts, and choose clearly whether to repair, edit or generate the complete saved draft.
-
-- **Keep the windows that already passed:** if window 4 needs review in a six-window job, retry its camera plan while retaining the other five prompts, shared story, dialogue and continuity. Works in Frames and References with Enhance now or queued enhancement. Saved repair progress survives restarts.
-- **Clearer prompt review:** **Generate all 6 windows with this draft** uses the complete saved draft. **Retry window 4 & generate** repairs the flagged window, then generates the full job if checks pass. **Edit prompts in Studio** opens the draft without starting generation. Full rewrites and generation from the original prompt are under **Other options**. Older drafts need a fresh enhancement to support targeted retries.
-- **Silent product prompts:** fixes the reported logotype-timeline heading being counted as a speaking character. Duration and aspect qualifiers in silent-video briefs no longer hide the no-dialogue instruction.
-
-- **More reliable H3 enhancement:** complete supplied conversations keep every line and its speaker; impossible dialogue durations receive a clear explanation before the LLM loads. Faithful camera paraphrases, colon-timed storyboards and silent reactions no longer trigger the same false review failures. Queued Enhance preserves reference names and actual voice bindings.
-- **Lower H3 memory peaks:** bounded normalization addresses the allocation hotspot reported on an A100 40 GB in [#139](https://github.com/Blizaine/Maestro/issues/139), preserving reference detail and precision. The isolated operation is validated; a complete run on the reporter's hardware remains unverified.
-
-- **One Enhance workflow:** develops short ideas and adapts detailed scripts to the selected model. Enhance now, or let a queued job enhance immediately before generation. An optional **Use by default** setting remembers Enhance on generation; saved source prompts and drafts remain available for review and retries.
-- **Stronger H3 prompt writing:** improved silent-action parsing, dialogue ownership, choreography, camera direction, first-frame continuity and multi-window timing. Director shares the relevant writing guidance. Prompt review remains available for drafts that need attention.
-- **YuE2 3B music:** the new default music model produces 48 kHz stereo songs, with Direct generation selected initially, optional composition planning, ABC scores and source-song covers. Later model choices are remembered.
-- **My music (Experimental):** prepare full songs with automatic transcription, voice selection and reviewed clips, or supply recordings and lyrics yourself. Train and resume personal style adapters, compare checkpoint auditions, reconstruct source audio, and import/export styles. New projects recommend the matched v9 tokenizer and decoder. Style and vocal resemblance vary; this is not a promise of reliable singer cloning. [Preparation guide](docs/YuE2-music.md#prepare-full-songs-automatically-guided).
-- **Director music controls:** adjustable clip maximum and GPU limit, working Cut Speed, full-song timing, and musical/vocal cues for camera planning. Longer H3 clips can approach 14.4s; instrument cutaways retain the assigned singer's voice off screen. Shot edits now save reliably.
-- **All folders gallery:** browse and search across output folders while keeping each item's source folder and the generation destination clear. Refresh, pagination and folder-qualified actions are fixed.
-- **TaoMate H3:** optional experimental three-step Frames acceleration, with pinned downloads and compatibility checks. Includes internal token-refiner weights; it is not a separate video-refinement pass.
-- **Image, queue and runtime fixes:** 21:9 image aspect, original/enhanced prompt details, multiline-image and Z-Image decoding fixes, corrected CivitAI model reloads, collapsible completed-job history, repeated-upload deduplication, and improved Linux local-LLM setup and diagnostics.
-
-Use **Update** in Pinokio, restart Maestro and refresh the browser. Existing models, characters, outputs and projects stay in place. New models and optional music tools download their assets when used. YuE2 model/tokenizer weights have separate noncommercial terms; see the [music guide](docs/YuE2-music.md).
-
-[Full release notes and issue status](docs/RELEASE_NOTES_V2.2.0.md) · [Validation and known limits](docs/VALIDATION_V2.2.0.md)
-
-### v2.1.6 (2026-09-11)
-
-**Better H3/Viggle memory use, detailed-prompt fixes, and simpler reference controls**
-
-- **Faster streaming H3/Viggle jobs:** the per-job memory planner now passes its transformer allowance to MMGP so eligible profiles can retain more weights in VRAM.
-- **Detailed action prompts stay out of the dialogue budget:** AI Faithful recognizes production headings, Role A/B descriptions and titled time ranges in imported briefs. Visual directions no longer trigger false “too much dialogue” errors for those formats, while actual spoken lines keep their timing checks.
-- **Reference editing beside the thumbnails:** name and type fields expand beneath the selected reference row. Drag thumbnails to reorder them; saved character appearance and voice stay together. Preview, replacement and soundtrack controls remain available.
-- **H3 Fused steps up to 12:** both Frames and References allow **4–12 total steps**, with four still the default. Studio remembers the last selected or used step count for each model across restarts, including when the browser port changes.
-
-Use Pinokio's **Update**, restart Maestro and refresh the browser. Run Enhance again from the original prompt to apply the parsing fixes. Existing models and saved projects stay in place; these changes require no new dependencies or model downloads.
-
-[Full release notes](docs/RELEASE_NOTES_V2.1.6.md) · [Validation and measured limits](docs/VALIDATION_V2.1.6.md)
-
-[Read earlier updates and the complete history →](docs/UPDATE_HISTORY.md)
-
 ## Requirements
 
 | | Minimum | Recommended |
 |---|---|---|
 | **OS** | Windows 10/11 or Linux | Windows 11 |
-| **GPU** | NVIDIA, 6 GB VRAM | NVIDIA RTX 3090 / 4090 / 5090, 24 GB+ VRAM |
+| **GPU** | NVIDIA, 6 GB VRAM; experimental Intel Arc XPU support | NVIDIA, 24 GB+ VRAM, or Intel Arc Pro B70, 32 GB VRAM |
 | **System RAM** | 16 GB | 32 GB+ |
 | **Disk space** | **150 GB free** | **500 GB free** (for full model collection) |
 | **Python** | Auto-installed by Pinokio | — |
@@ -354,17 +381,19 @@ Use Pinokio's **Update**, restart Maestro and refresh the browser. Run Enhance a
 
 The first video is always the slow one: install is ~10–20 min, then the first generation on each model downloads its weights (the default video model is ~18 GB). After that, weights are cached and only generation time applies. Maestro's auto-tune sizes the settings to your card on first launch so you don't have to.
 
-> ⚠ **AMD GPUs and macOS are not currently supported.** The pipeline depends on CUDA and several NVIDIA-only kernels. MacOS support is in development.  
+The timing table above describes NVIDIA configurations. Intel XPU timings need to be measured with the selected model and workload. The locally exercised B70 system has 64 GB system RAM.
+
+> ⚠ **AMD GPUs and macOS are not currently supported by this launcher.** Several optional model and acceleration paths still require CUDA.
 
 > ⚠ **Model downloads are large.** A typical install pulls **50–100 GB** of model weights on first launch. The full collection can exceed **300 GB**. Make sure you have headroom on the drive where Pinokio is installed. However, only models requested during generation will be downloaded. 
 
 ## Install
 
 1. Install [Pinokio](https://pinokio.computer).
-2. In Pinokio, open the **Discover** tab and search for *Maestro* — or click the **Download** button on the [Maestro repo page](https://github.com/Blizaine/Maestro) and paste the URL.
+2. Download [this fork](https://github.com/gjphilander/Maestro-IntelArc) in Pinokio, or use the `main` branch clone command at the top of this README. Check that the installed files come from `gjphilander/Maestro-IntelArc`.
 3. Click **Install**. The launcher will:
-   - Create the hardware-matched Python environment: `app/env-sol/` on supported RTX 40-class GPUs, `app/env-rtx50/` on RTX 50-series GPUs, or `app/env/` on other supported NVIDIA GPUs
-   - Install all Python dependencies (torch, xformers, transformers, fastapi, …)
+   - Create the hardware-matched Python environment: `app/env-xpu/` for Intel Arc, `app/env-sol/` on supported RTX 40-class GPUs, `app/env-rtx50/` on RTX 50-series GPUs, or `app/env/` on other supported NVIDIA GPUs
+   - Install Python dependencies appropriate to the selected runtime, including official PyTorch XPU wheels for Intel
    - Build the React UI in `ui/`
 4. When install finishes, click **Start**. The first generation in each model triggers a one-time weight download.
 
@@ -386,7 +415,7 @@ Click **Update** in the launcher menu. This pulls the latest launcher scripts an
 
 The `app/env-sol/` H3 performance environment is removed along with the other Maestro environments.
 
-Click **Reset** to wipe the install and start over. Removes `app/env/`, `app/env-sol/`, `app/env-rtx50/`, `ui/node_modules/`, `ui/dist/`, and the SAM venv if installed. Model checkpoints in `app/ckpts/` are NOT removed by default — delete them manually if you want a true fresh start.
+Click **Reset** to recreate the installed dependencies. It removes `app/env/`, `app/env-xpu/`, `app/env-sol/`, `app/env-rtx50/`, `ui/node_modules/`, `ui/dist/`, and the SAM venv if installed. Model checkpoints in `app/ckpts/` are retained.
 
 ## Usage
 
@@ -407,6 +436,17 @@ select a model, and describe the scene or prompt you want to develop. Use
 Maestro connects to `http://127.0.0.1:11434` by default; set `OLLAMA_HOST` to
 use a different Ollama address. Chat requests run on the selected Ollama model.
 
+The conversation list appears on the left of Chat. Conversations and attachment
+context are saved in browser local storage for that Maestro address. Clearing
+site data removes them, and switching browser profiles or server ports uses a
+different storage area. Attachments, microphone dictation and the spoken
+**Use in Studio** command are described below and in the feature list.
+
+If the selector reports no models, run `ollama list`. Maestro discovers models
+through Ollama's API. If Ollama itself lists none despite downloaded files,
+check its `OLLAMA_MODELS` setting and restart Ollama. It must point to the
+directory containing `blobs` and `manifests`, then refresh the model list in Chat.
+
 ### Compress a generated video
 
 Open **Compress** in the main workspace and select a generated video from an
@@ -416,6 +456,54 @@ Maestro saves a separate `_compressed.mp4` and preserves the source. For an MP4
 source, you can instead choose to replace it; Maestro does so only after the
 compression finishes successfully. Uploaded source videos are not available in
 this tool.
+
+Compression uses FFmpeg's software `libx264` encoder and AAC audio. It runs on
+the CPU. Maestro looks for `FFMPEG_BINARY`, FFmpeg on `PATH`, and local binaries
+in `app/ffmpeg_bins/` or `app/`. The Python package named `ffmpeg` is a wrapper
+and requires the FFmpeg executable.
+
+### Text overlays and the Titles track
+
+Click **Add text** in the Editor timeline toolbar, or the **+** on an unlocked **Titles** track. Maestro adds a three-second title at the playhead (or the next available space), selects it, and opens **Adjust**. The **Title** button in the Media panel also works. Enter your text in Adjust; line breaks are supported. Drag or trim the title clip to control when it appears and how long it stays on screen.
+
+Text controls include font family, **Regular / Bold** weight, **Normal / Italic** style, font size and color, **Text X / Y** position, left/center/right alignment, outline **Border width / color**, and an optional **Text shadow** with color and X/Y offsets. Zero border width disables the outline. Turn off Text shadow to remove the shadow. Background color and opacity are separate controls; set background opacity to zero for text without a box. Size, border and shadow offsets use canvas pixels. Text X/Y are offsets from the canvas center; negative values move left/up and positive values move right/down.
+
+Styles are saved with the project and used in both preview and FFmpeg export. Fonts must be installed on the machine: export selects the requested face when available, otherwise a system fallback. Some display fonts such as Impact do not supply every weight/style, so the exported face can differ from the browser's synthesized version. `MAESTRO_EDITOR_FONT`, if configured, overrides automatic export font selection. Browser and FFmpeg text metrics can differ slightly. See [Text overlay instructions](docs/Editor-Text-Overlays.md).
+
+### Editor transitions
+
+In **Editor → Transitions**, choose from eight presets: **Dip to black**, **Dip to white**, **Fade through layer**, **Wipe left**, **Wipe right**, **Wipe up**, **Wipe down**, and **Hard cut**. Drag a preset onto the **+** between adjacent clips on an unlocked video track, or select it and click the cut. Use **Adjust → Transition in / out** to change individual edges and their durations. Duration edits preserve the selected effect; Hard cut clears both edges.
+
+Transitions preview in the Editor, survive save/reload, support Undo, and render through FFmpeg. They default to 0.5 seconds per side (capped at half the shorter clip), preserve clip positions and total runtime, and fade clip audio over the same edge durations. Wipes reveal the underlying layer or canvas. These are sequential edge effects, not overlapping crossfades between two moving clips. CPU processing of wipe masks can increase export time.
+
+The November 2026 expansion adds dip-to-white and four directional wipes to the original presets. After updating, rebuild the UI if updating manually, restart Maestro, and refresh the browser with **Ctrl+F5**. See [Editor transition instructions and change record](docs/Editor-Transitions.md).
+
+### Combine generated clips
+
+Open **Combine Clips** in the main workspace. Add at least two videos in the
+order they should play. Remove an item and add it again to change its position.
+Click **Combine clips** to save `combined_<id>.mp4` in the active output workspace.
+
+The first clip determines the output frame size. Each clip is re-encoded to
+30 fps H.264 video with aspect-preserving scaling and padding, plus 48 kHz stereo
+AAC audio. Clips without audio receive silence. Original clips are retained.
+This tool requires FFmpeg and FFprobe and processes clips on the CPU. Uploaded
+source videos are excluded from the selector.
+
+### Standalone Windows startup
+
+After installing dependencies and building the UI through Pinokio, double-click
+`start-maestro.bat` in the cloned repository. The script selects the installed
+GPU environment, runs the Intel preflight when applicable, then opens the WebUI
+in your default browser after startup. Set `SERVER_PORT` before launch to request
+a different port. Maestro tries subsequent ports if the preferred port is busy.
+Press **Ctrl+C** in the terminal to stop the server gracefully.
+
+### FFmpeg export compatibility
+
+Editor export retries with FFmpeg's `-/filter_complex` syntax if the installed
+FFmpeg rejects `-filter_complex_script`. H3 reference-window extraction and
+multi-clip concatenation use `-fps_mode cfr` for constant-frame-rate output.
 
 ## Sharing on the local network
 

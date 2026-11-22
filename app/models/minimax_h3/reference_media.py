@@ -211,7 +211,7 @@ def extract_reference_video_window(
         "ffmpeg", "-hide_banner", "-loglevel", "error", "-y",
         "-ss", f"{seek_time:.6f}", "-i", source,
         "-map", "0:v:0", "-an", "-vf", filter_graph,
-        "-frames:v", str(frame_count), "-vsync", "cfr", "-r", str(target_fps),
+        "-frames:v", str(frame_count), "-fps_mode", "cfr", "-r", str(target_fps),
         "-c:v", "libx264", "-preset", "fast", "-crf", "18", "-pix_fmt", "yuv420p",
         "-movflags", "+faststart", "-f", "mp4",
     ]

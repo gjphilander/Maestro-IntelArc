@@ -199,6 +199,7 @@ def h3_sequence_plan_signature(
     native_continuation: bool = False,
     planning_style: str = "faithful",
     lora_system_hint: str = "",
+    source_audio_transcript: dict | None = None,
 ) -> str:
     reference_contract = [
         {
@@ -238,6 +239,9 @@ def h3_sequence_plan_signature(
     guidance_fingerprint = lora_guidance_fingerprint(lora_system_hint)
     if guidance_fingerprint:
         payload["lora_guidance_fingerprint"] = guidance_fingerprint
+    if source_audio_transcript is not None:
+        from services.studio_audio_context import transcript_fingerprint
+        payload["source_audio_transcript"] = transcript_fingerprint(source_audio_transcript)
     encoded = json.dumps(payload, ensure_ascii=False, sort_keys=True).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:24]
 
@@ -443,7 +447,12 @@ def build_manual_h3_reference_sequence_plan(
 def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]:
     """Return relationship, retention, and official task-type summaries."""
 
-    from models.minimax_h3.ref2va import canonicalize_ref2va_reference_order
+    from models.minimax_h3.ref2va import (
+        _build_ref2va_character_bindings,
+        _ref2va_audio_item_subject,
+        _ref2va_audio_ordinals_by_item,
+        canonicalize_ref2va_reference_order,
+    )
     from models.minimax_h3.reference_manifest import (
         object_reference_prompt_contract,
         validate_reference_manifest,
@@ -459,14 +468,25 @@ def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]
         allow_empty=True,
     )
     _prompt, items, _order_remap = canonicalize_ref2va_reference_order("", items)
-    picture = video = audio = subject = 0
+    (
+        character_reference_subjects,
+        character_subjects,
+        role_subjects,
+        _speaker_aliases,
+        character_subject_count,
+    ) = _build_ref2va_character_bindings(items)
+    subject = character_subject_count
+    auxiliary_subjects: dict[int, int] = {}
+    for reference_index, item in enumerate(items):
+        if item.get("type") == "image" and item.get("image_intent", "identity") in {"scene", "style"}:
+            subject += 1
+            auxiliary_subjects[reference_index] = subject
+    audio_ordinals = _ref2va_audio_ordinals_by_item(items)
+    picture = video = 0
     relationships: list[str] = []
     retention: list[str] = []
     task_types = ["reference generation"]
-    role_subjects: dict[str, int] = {}
-    character_subjects: dict[str, int] = {}
-    pending_voice: list[tuple[int, dict, str]] = []
-    for item in items:
+    for reference_index, item in enumerate(items):
         kind = item["type"]
         # Roles are prose within one reference row, not additional metadata
         # lines (including the machine-generated soundtrack clock).
@@ -484,10 +504,12 @@ def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]
                 )
                 retention.append(f"<Picture {picture}>: weak_reference")
             elif intent == "scene":
-                subject += 1
+                subject = auxiliary_subjects[reference_index]
                 relationships.append(
                     f"<Subject {subject}> is the environment and location for "
-                    f"{role}, defined by <Picture {picture}>."
+                    f"{role}, defined by <Picture {picture}>; its architecture, materials, "
+                    "lighting context, and location apply without treating incidental people "
+                    "as target character identities."
                 )
                 retention.append(
                     f"<Subject {subject}>: partially_preserved - preserve the "
@@ -495,7 +517,7 @@ def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]
                     "location identity."
                 )
             elif intent == "style":
-                subject += 1
+                subject = auxiliary_subjects[reference_index]
                 relationships.append(
                     f"<Subject {subject}> is the visual treatment for {role}, "
                     f"guided by <Picture {picture}>."
@@ -505,11 +527,7 @@ def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]
                     "similarity in medium, palette, lighting language, and texture."
                 )
             else:
-                subject += 1
-                role_subjects[str(role).strip().casefold()] = subject
-                character_key = str(item.get("library_character_id") or "").strip()
-                if character_key:
-                    character_subjects[character_key] = subject
+                subject = character_reference_subjects[reference_index]
                 relationships.append(
                     f"<Subject {subject}> is {role} from <Picture {picture}>, preserving "
                     "identity and visible appearance; the source background, framing, "
@@ -523,11 +541,7 @@ def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]
             video += 1
             video_intent = item.get("video_intent", "motion")
             if video_intent == "character":
-                subject += 1
-                role_subjects[str(role).strip().casefold()] = subject
-                character_key = str(item.get("library_character_id") or "").strip()
-                if character_key:
-                    character_subjects[character_key] = subject
+                subject = character_reference_subjects[reference_index]
                 relationships.append(
                     f"<Subject {subject}> is {role} from <Video {video}>, preserving identity, "
                     "appearance, and characteristic motion while using the newly described target "
@@ -558,7 +572,7 @@ def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]
                 and (item.get("has_audio") or item.get("audio_path"))
                 and item.get("include_audio", True)
             ):
-                audio += 1
+                audio = audio_ordinals[reference_index]
                 relationships.append(
                     f"<Audio {audio}> is the soundtrack paired with <Video {video}> and keeps its audible timeline."
                 )
@@ -573,7 +587,7 @@ def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]
                 if "audio reuse" not in task_types:
                     task_types.append("audio reuse")
             elif audio_role in {"voice", "style", "sound"} and not derived_audio_row:
-                audio += 1
+                audio = audio_ordinals[reference_index]
                 if audio_role == "style":
                     relationships.append(
                         f"<Audio {audio}> supplies sound, music, rhythm, or texture style for {role}, without copying its signal."
@@ -589,19 +603,14 @@ def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]
                     if "audio reference" not in task_types:
                         task_types.append("audio reference")
                 else:
-                    character_key = str(item.get("library_character_id") or "").strip()
-                    mapped_subject = (
-                        character_subjects.get(character_key)
-                        if character_key else role_subjects.get(str(role).strip().casefold())
+                    mapped_subject = _ref2va_audio_item_subject(
+                        item, character_subjects, role_subjects,
                     )
-                    if mapped_subject is None and (character_key or str(role).strip()):
-                        pending_voice.append((audio, item, role))
-                    else:
-                        target = f"<Subject {mapped_subject}>" if mapped_subject else str(role)
-                        relationships.append(
-                            f"<Audio {audio}> is the voice-timbre reference for {target}, guiding emotion and delivery without reusing source words or timing."
-                        )
-                        retention.append(f"<Audio {audio}>: reference")
+                    target = f"<Subject {mapped_subject}>" if mapped_subject else str(role)
+                    relationships.append(
+                        f"<Audio {audio}> is the voice-timbre reference for {target}, guiding emotion and delivery without reusing source words or timing."
+                    )
+                    retention.append(f"<Audio {audio}>: reference")
                     if "audio reference" not in task_types:
                         task_types.append("audio reference")
         else:
@@ -627,7 +636,7 @@ def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]
                 if "audio reuse" not in task_types:
                     task_types.append("audio reuse")
             elif intent == "style":
-                audio += 1
+                audio = audio_ordinals[reference_index]
                 relationships.append(
                     f"<Audio {audio}> supplies sound, music, rhythm, or texture style for {role}, without copying its signal."
                 )
@@ -635,7 +644,7 @@ def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]
                 if "audio reference" not in task_types:
                     task_types.append("audio reference")
             elif intent == "sound":
-                audio += 1
+                audio = audio_ordinals[reference_index]
                 relationships.append(
                     f"<Audio {audio}> is a reusable sound-effect reference for {role}; "
                     "generate matching effects for the requested actions using its timbre "
@@ -648,15 +657,10 @@ def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]
                 if "audio reference" not in task_types:
                     task_types.append("audio reference")
             else:
-                audio += 1
-                character_key = str(item.get("library_character_id") or "").strip()
-                mapped_subject = (
-                    character_subjects.get(character_key)
-                    if character_key else role_subjects.get(str(role).strip().casefold())
+                audio = audio_ordinals[reference_index]
+                mapped_subject = _ref2va_audio_item_subject(
+                    item, character_subjects, role_subjects,
                 )
-                if mapped_subject is None and (character_key or str(role).strip()):
-                    pending_voice.append((audio, item, role))
-                    continue
                 target = (
                     f"<Subject {mapped_subject}>"
                     if mapped_subject else str(role)
@@ -668,20 +672,6 @@ def _reference_context(references: list[dict[str, Any]]) -> tuple[str, str, str]
                 retention.append(f"<Audio {audio}>: reference")
                 if "audio reference" not in task_types:
                     task_types.append("audio reference")
-    for audio_index, item, role in pending_voice:
-        character_key = str(item.get("library_character_id") or "").strip()
-        mapped_subject = (
-            character_subjects.get(character_key)
-            if character_key else role_subjects.get(str(role).strip().casefold())
-        )
-        target = f"<Subject {mapped_subject}>" if mapped_subject else str(role)
-        relationships.append(
-            f"<Audio {audio_index}> is the voice-timbre reference for {target}, guiding "
-            "emotion and delivery without reusing the source words or timing."
-        )
-        retention.append(f"<Audio {audio_index}>: reference")
-        if "audio reference" not in task_types:
-            task_types.append("audio reference")
     return "\n".join(relationships), "\n".join(retention), " + ".join(task_types)
 
 
@@ -1787,10 +1777,12 @@ def plan_h3_reference_sequence(
     planning_style: str = "faithful",
     lora_system_hint: str = "",
     retry_plan: dict[str, Any] | None = None,
+    source_audio_transcript: dict | None = None,
 ) -> dict[str, Any]:
     """Plan H3 Omni windows that share canonical references."""
 
-    raw_prompt = str(prompt or "").strip()
+    from services.studio_audio_context import strip_window_transcript
+    raw_prompt = strip_window_transcript(str(prompt or ""))
     prompt = recover_h3_plain_story(raw_prompt)
     source_intent = extract_h3_source_intent(prompt)
     if prompt != raw_prompt and "subject_definitions:" in raw_prompt.casefold():
@@ -1819,6 +1811,15 @@ def plan_h3_reference_sequence(
         )
     relationships, default_retention, task_types = _reference_context(references)
     relationships = canonicalize_h3_reference_names(relationships, source_intent["cast_names"])
+    from services.studio_audio_context import (
+        conditioning_transcript_windows, transcript_plan_context, transcript_window_contexts,
+    )
+    audio_windows = conditioning_transcript_windows(
+        clips, overlap_frames=overlap_frames if native_continuation else 0, fps=fps,
+    )
+    audio_context = transcript_plan_context(source_audio_transcript, audio_windows)
+    if audio_context:
+        relationships += "\n\n" + audio_context
     signature = h3_sequence_plan_signature(
         prompt,
         model_type=model_type,
@@ -1834,6 +1835,7 @@ def plan_h3_reference_sequence(
         native_continuation=native_continuation,
         planning_style=planning_style,
         lora_system_hint=lora_system_hint,
+        source_audio_transcript=source_audio_transcript,
     )
     guidance_fingerprint = lora_guidance_fingerprint(lora_system_hint)
     from services.h3_plan_retry import finish_retry_plan, retry_fingerprint, validate_retry_plan
@@ -1889,6 +1891,7 @@ def plan_h3_reference_sequence(
             # subject field made every fallback prompt repeat the same
             # fully_preserved/reference list twice.
             reference_context=relationships,
+            source_audio_context_windows=transcript_window_contexts(source_audio_transcript, audio_windows),
             expect_dialogue=expect_dialogue,
             planning_style=planning_style,
             image_paths=image_paths,

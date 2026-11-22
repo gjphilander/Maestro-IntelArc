@@ -55,6 +55,15 @@ module.exports = async (kernel) => {
         method: "local.rm",
         params: ["url", "port"],
       },
+      {
+        // Keep the CPU-only control plane in its own Pinokio daemon. This is
+        // best-effort so Agent Access startup never blocks the model engine.
+        method: "shell.run",
+        params: {
+          path: ".",
+          message: ["node scripts/pinokio/agent_access_rpc.js autostart"],
+        },
+      },
       ...runtimeGuard,
       {
         when: xpuSelected,
@@ -135,6 +144,7 @@ module.exports = async (kernel) => {
           venv_python: selectedPython,
           env: {
             SERVER_PORT: port,
+            MAESTRO_LAUNCHER_SCRIPT: "start.js",
             // XPU: Resolve from Pinokio GPU metadata or the installed runtime marker.
             MAESTRO_DEVICE: `{{${xpuSelected.slice(2, -2)} ? 'xpu' : ''}}`,
             ONEAPI_DEVICE_SELECTOR: "{{envs.ONEAPI_DEVICE_SELECTOR || 'level_zero:gpu'}}",

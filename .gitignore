@@ -76,6 +76,7 @@ app/presets.json
 
 # SAM service runtime
 app/services/sam/env/
+app/env-agent/
 app/services/sam/sam3/
 app/services/sam/checkpoints/
 .masks/
@@ -115,6 +116,12 @@ app/wgp_config.json.bak
 
 # Optional, separately licensed native DLSS runtime installed by the user.
 app/dlss5/
+
+# UI build safety metadata and local staging/backups.
+ui/.maestro-source-baseline.json
+ui/.maestro-build-receipt.json
+ui/.maestro-staging-*/
+ui/.maestro-build-backups-*/
 
 # Private maintainer state (the CI boundary guard also rejects force-adds).
 /.codex/

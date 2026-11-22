@@ -55,6 +55,16 @@ module.exports = async (kernel) => {
       message: "uv pip install pywebpush==2.3.0"
     }
   }, {
+    // Reconcile the independent CPU-only Agent Access environment on the
+    // fast path too, without touching the selected model runtime.
+    method: "shell.run",
+    params: {
+      venv: "env-agent",
+      venv_python: "3.11",
+      path: "app",
+      message: "uv pip install -r requirements-agent-access.txt"
+    }
+  }, {
     // Before halting, self-heal the seed-vc component if it's missing
     // (GPL-3.0, cloned from its own repo — see install.js): a failed earlier
     // clone shouldn't leave voice features broken until the next code update.
@@ -88,6 +98,16 @@ module.exports = async (kernel) => {
       venv_python: runtime.python,
       path: "app",
       message: "uv pip install -r requirements.txt"
+    }
+  }, {
+    // Keep the control plane's CPU-only dependencies out of every CUDA model
+    // environment; the sidecar starts separately from the selected engine.
+    method: "shell.run",
+    params: {
+      venv: "env-agent",
+      venv_python: "3.11",
+      path: "app",
+      message: "uv pip install -r requirements-agent-access.txt"
     }
   }, ...(intelXpu ? [{
     // XPU: Requirements can reintroduce optional NVIDIA packages. Restore the

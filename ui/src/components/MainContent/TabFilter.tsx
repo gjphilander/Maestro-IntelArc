@@ -13,6 +13,7 @@ const tabs: { value: MediaFilter; label: string; shortLabel: string; icon?: stri
   { value: 'favorites', label: 'Favorites', shortLabel: '', icon: 'heart' },
   { value: 'compress', label: 'Compress', shortLabel: 'Cmp' },
   { value: 'chat', label: 'Chat', shortLabel: 'Chat' },
+  { value: 'combine', label: 'Combine Clips', shortLabel: 'Combine' },
 ]
 
 export function TabFilter() {

@@ -10,6 +10,7 @@ import {
   Link2,
   Magnet,
   MapPin,
+  MoreHorizontal,
   Plus,
   Scissors,
   ScanLine,
@@ -33,11 +34,14 @@ import {
   nextEditorItemStart,
   previousEditorItemEnd,
 } from './editorUtils'
+import { cutPresets, transitionCuts, transitionWithDuration } from './editorTransitions'
 import { EditorClipMedia } from './EditorClipMedia'
 import { useEditorStore } from './useEditorStore'
 
 const TRACK_HEADER_WIDTH = 132
-const TRACK_HEIGHT = 46
+const TRACK_HEIGHT = 48
+const TRACK_HEIGHT_MIN = 48
+const TRACK_HEIGHT_MAX = 132
 
 type DragMode = 'move' | 'trim-start' | 'trim-end' | 'fade-in' | 'fade-out'
 interface DragState {
@@ -85,17 +89,29 @@ function clipClasses(type: EditorTrack['type']): string {
   return 'border-accent-blue/50 bg-accent-blue/20 text-accent-blue'
 }
 
-export function EditorTimeline({ compact = false }: { compact?: boolean }) {
+export function EditorTimeline({ compact = false, fill = false }: { compact?: boolean; fill?: boolean }) {
   const scrollRef = useRef<HTMLDivElement>(null)
   const timelineContentRef = useRef<HTMLDivElement>(null)
   const trackMenuButtonRef = useRef<HTMLButtonElement>(null)
   const touchPointersRef = useRef(new Map<number, { x: number; y: number }>())
   const pinchRef = useRef<TimelinePinchState | null>(null)
   const [drag, setDrag] = useState<DragState | null>(null)
+  const [showTransitions, setShowTransitions] = useState(false)
+  const [preset, setPreset] = useState<typeof cutPresets[number][0]>('fade_black')
+  const addTitle = useEditorStore(state => state.addTitle)
+  const applyCut = useEditorStore(state => state.applyCut)
   const [marquee, setMarquee] = useState<MarqueeState | null>(null)
   const [playheadPointerId, setPlayheadPointerId] = useState<number | null>(null)
   const [trackMenuOpen, setTrackMenuOpen] = useState(false)
+  const [clipMenu, setClipMenu] = useState<{ left: number; top: number } | null>(null)
   const [trackMenuPosition, setTrackMenuPosition] = useState({ left: 8, top: 8 })
+  const [preferredTrackHeight, setPreferredTrackHeight] = useState(() => {
+    try {
+      const saved = Number(localStorage.getItem('maestro-editor-track-height'))
+      return Number.isFinite(saved) && saved >= TRACK_HEIGHT_MIN ? Math.min(TRACK_HEIGHT_MAX, saved) : TRACK_HEIGHT
+    } catch { return TRACK_HEIGHT }
+  })
+  const [viewport, setViewport] = useState({ left: 0, top: 0, width: 1200, height: 320 })
   const project = useEditorStore(state => state.project)
   const selectedItemId = useEditorStore(state => state.selectedItemId)
   const selectedItemIds = useEditorStore(state => state.selectedItemIds)
@@ -126,6 +142,7 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
   const removeTrack = useEditorStore(state => state.removeTrack)
   const addMedia = useEditorStore(state => state.addMedia)
   const updateItem = useEditorStore(state => state.updateItem)
+  const executeEditOperations = useEditorStore(state => state.executeEditOperations)
   const linkSelected = useEditorStore(state => state.linkSelected)
   const unlinkSelected = useEditorStore(state => state.unlinkSelected)
   const addMarker = useEditorStore(state => state.addMarker)
@@ -142,11 +159,34 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
   const duration = editorProjectDuration(project)
   const contentDuration = Math.max(12, duration + 4)
   const contentWidth = Math.max(compact ? 620 : 900, contentDuration * pixelsPerSecond)
-  const trackHeight = compact ? 58 : TRACK_HEIGHT
+  const trackHeight = compact ? Math.max(64, preferredTrackHeight) : preferredTrackHeight
   const tickStep = pixelsPerSecond >= 90 ? 1 : pixelsPerSecond >= 45 ? 2 : 5
+  const visibleStart = Math.max(0, (viewport.left - TRACK_HEADER_WIDTH - 160) / pixelsPerSecond)
+  const visibleEnd = (viewport.left + viewport.width + 160) / pixelsPerSecond
   const ticks = useMemo(() => (
-    Array.from({ length: Math.min(1200, Math.ceil(contentDuration / tickStep) + 1) }, (_, index) => index * tickStep)
-  ), [contentDuration, tickStep])
+    Array.from({ length: Math.max(0, Math.min(1200, Math.ceil((Math.min(contentDuration, visibleEnd) - visibleStart) / tickStep) + 2)) },
+      (_, index) => (Math.floor(visibleStart / tickStep) + index) * tickStep)
+  ), [contentDuration, tickStep, visibleStart, visibleEnd])
+  useEffect(() => {
+    const element = scrollRef.current
+    if (!element) return
+    const measure = () => setViewport({ left: element.scrollLeft, top: element.scrollTop, width: element.clientWidth, height: element.clientHeight })
+    const observer = new ResizeObserver(measure)
+    observer.observe(element)
+    measure()
+    return () => observer.disconnect()
+  }, [project?.id, compact, fill])
+  useEffect(() => {
+    if (!clipMenu) return
+    document.querySelector<HTMLButtonElement>('[data-editor-clip-menu] button')?.focus()
+    const close = (event: PointerEvent) => {
+      if (!(event.target instanceof Element) || !event.target.closest('[data-editor-clip-menu], [data-editor-clip-menu-trigger]')) setClipMenu(null)
+    }
+    const keyboard = (event: KeyboardEvent) => { if (event.key === 'Escape') setClipMenu(null) }
+    document.addEventListener('pointerdown', close)
+    document.addEventListener('keydown', keyboard)
+    return () => { document.removeEventListener('pointerdown', close); document.removeEventListener('keydown', keyboard) }
+  }, [clipMenu])
   const scrubPlayhead = useCallback((clientX: number) => {
     const rect = timelineContentRef.current?.getBoundingClientRect()
     if (!rect) return
@@ -274,19 +314,17 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
       if (drag.mode === 'move') moveItem(drag.itemId, drag.previewStart, drag.previewTrackId)
       else if (drag.mode === 'fade-in') updateItem(drag.itemId, {
         fade_in: drag.previewFadeIn,
-        transition_in: drag.previewFadeIn > 0
-          ? project?.tracks.flatMap(track => track.items).find(item => item.id === drag.itemId)?.transition_in === 'fade_black'
-            ? 'fade_black'
-            : 'dissolve'
-          : 'none',
+        transition_in: transitionWithDuration(
+          project?.tracks.flatMap(track => track.items).find(item => item.id === drag.itemId)?.transition_in,
+          drag.previewFadeIn,
+        ),
       })
       else if (drag.mode === 'fade-out') updateItem(drag.itemId, {
         fade_out: drag.previewFadeOut,
-        transition_out: drag.previewFadeOut > 0
-          ? project?.tracks.flatMap(track => track.items).find(item => item.id === drag.itemId)?.transition_out === 'fade_black'
-            ? 'fade_black'
-            : 'dissolve'
-          : 'none',
+        transition_out: transitionWithDuration(
+          project?.tracks.flatMap(track => track.items).find(item => item.id === drag.itemId)?.transition_out,
+          drag.previewFadeOut,
+        ),
       })
       else trimItem(drag.itemId, drag.mode === 'trim-start' ? 'start' : 'end', drag.mode === 'trim-start' ? drag.previewStart : drag.previewEnd)
       setDrag(null)
@@ -390,7 +428,7 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
           style={trackMenuPosition}
         >
           {(['video', 'audio', 'text'] as const).map(type => (
-            <button key={type} type="button" onClick={() => { addTrack(type); setTrackMenuOpen(false) }} className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-[9px] capitalize text-text-secondary hover:bg-bg-hover">
+            <button key={type} type="button" onClick={() => { addTrack(type); setTrackMenuOpen(false) }} className="flex w-full items-center gap-1.5 rounded px-2 py-1.5 text-[11px] capitalize text-text-secondary hover:bg-bg-hover">
               <TrackIcon type={type} /> {type}
             </button>
           ))}
@@ -505,9 +543,10 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
   }
 
   return (
-    <section className={`flex min-h-0 flex-col border-t border-border bg-bg-secondary ${compact ? 'h-full' : 'h-[310px] shrink-0'}`}>
-      <div className="flex h-10 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
-        <button type="button" onClick={splitSelected} disabled={!selectedItemId} className="flex items-center gap-1 rounded-md px-2 py-1 text-[9px] text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:opacity-25" title="Split at playhead (S)">
+    <section data-testid="editor-timeline" className={`flex min-h-0 flex-col border-t border-border bg-bg-secondary ${compact || fill ? 'h-full' : 'h-[310px] shrink-0'}`}>
+      <div className="flex h-11 shrink-0 items-center gap-1.5 overflow-x-auto border-b border-border px-2.5 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden">
+        <button type="button" aria-expanded={showTransitions} onClick={() => setShowTransitions(!showTransitions)} className="rounded-md border border-border px-2 py-1 text-[10px] text-text-primary hover:bg-bg-hover">Transitions</button>
+        <button type="button" onClick={splitSelected} disabled={!selectedItemId} className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-text-secondary hover:bg-bg-hover hover:text-text-primary disabled:opacity-25" title="Split at playhead (S)">
           <Scissors size={11} /> <span className="hidden sm:inline">Split</span>
         </button>
         <button type="button" onClick={duplicateSelected} disabled={!selectedItemId} className="rounded-md p-1.5 text-text-muted hover:bg-bg-hover hover:text-text-primary disabled:opacity-25" title="Duplicate clip">
@@ -522,6 +561,11 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
         <button type="button" onClick={deleteSelected} disabled={!selectedItemId} className="rounded-md p-1.5 text-text-muted hover:bg-red-500/10 hover:text-red-400 disabled:opacity-25" title="Delete selected">
           <Trash2 size={11} />
         </button>
+        <button type="button" data-editor-clip-menu-trigger disabled={!selectedItemId} title="Clip actions" aria-label="Clip actions" aria-expanded={Boolean(clipMenu)}
+          onClick={event => {
+            const bounds = event.currentTarget.getBoundingClientRect()
+            setClipMenu(current => current ? null : { left: Math.min(window.innerWidth - 245, bounds.left), top: Math.max(8, Math.min(window.innerHeight - 340, bounds.bottom + 4)) })
+          }} className="rounded-md p-1.5 text-text-secondary hover:bg-bg-hover disabled:opacity-30"><MoreHorizontal size={15} /></button>
         <div className="mx-1 h-4 w-px bg-border" />
         <button type="button" onClick={() => jumpToEdit(-1)} className="rounded-md p-1.5 text-text-muted hover:bg-bg-hover hover:text-text-primary" title="Previous edit (Up arrow)">
           <StepBack size={11} />
@@ -532,8 +576,11 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
         <button type="button" onClick={() => setSnapping(!snapping)} className={`rounded-md p-1.5 ${snapping ? 'bg-accent-blue/15 text-accent-blue' : 'text-text-muted hover:bg-bg-hover'}`} title="Snapping">
           <Magnet size={11} />
         </button>
-        <button type="button" onClick={() => setRipple(!ripple)} className={`flex items-center gap-1 rounded-md px-2 py-1 text-[9px] ${ripple ? 'bg-accent-blue/15 text-accent-blue' : 'text-text-muted hover:bg-bg-hover'}`} title="Close gaps when deleting clips">
+        <button type="button" onClick={() => setRipple(!ripple)} className={`flex items-center gap-1 rounded-md px-2 py-1 text-[11px] ${ripple ? 'bg-accent-blue/15 text-accent-blue' : 'text-text-muted hover:bg-bg-hover'}`} title="Close gaps when deleting clips">
           <Waves size={11} /> <span className="hidden sm:inline">Ripple</span>
+        </button>
+        <button type="button" onClick={() => addTitle(undefined, selectedTrackId || undefined)} className="flex items-center gap-1 rounded-md px-2 py-1 text-[10px] text-text-primary hover:bg-bg-hover" title="Add overlay text at playhead">
+          <TextCursorInput size={12} /> Add text
         </button>
         <button type="button" onClick={() => addMarker(playhead)} className="rounded-md p-1.5 text-text-muted hover:bg-bg-hover hover:text-accent-warm" title="Add marker at playhead (M)">
           <MapPin size={11} />
@@ -566,13 +613,24 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
               })
               setTrackMenuOpen(true)
             }}
-            className="flex items-center gap-1 rounded-md px-2 py-1 text-[9px] text-text-muted hover:bg-bg-hover hover:text-text-primary"
+            className="flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-text-muted hover:bg-bg-hover hover:text-text-primary"
           >
             <Plus size={11} /> Track
           </button>
         </div>
         <div className="ml-auto flex items-center gap-1">
-          <span className="hidden font-mono text-[9px] text-text-muted sm:block">{formatEditorTime(playhead, true, project.canvas.fps)}</span>
+          <label className="hidden h-11 items-center gap-1.5 px-2 text-[11px] text-text-secondary md:flex">
+            Tracks
+            <input type="range" min={TRACK_HEIGHT_MIN} max={TRACK_HEIGHT_MAX} step={4} value={preferredTrackHeight} aria-label="Track height"
+              aria-valuetext={`${preferredTrackHeight} pixels`}
+              className="h-11 w-24 touch-pan-x accent-[var(--color-accent-blue)]"
+              onChange={event => {
+                const height = Number(event.target.value)
+                setPreferredTrackHeight(height)
+                try { localStorage.setItem('maestro-editor-track-height', String(height)) } catch { /* Session-only layout. */ }
+              }} />
+          </label>
+          <span className="hidden font-mono text-[11px] text-text-muted sm:block">{formatEditorTime(playhead, true, project.canvas.fps)}</span>
           <button type="button" onClick={zoomToFit} className="rounded p-1 text-text-muted hover:bg-bg-hover hover:text-text-primary" title="Fit timeline">
             <ScanLine size={11} />
           </button>
@@ -582,10 +640,30 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
         </div>
       </div>
 
+      {showTransitions && (
+        <div className="flex shrink-0 flex-wrap items-center gap-2 border-b border-border px-3 py-1.5">
+          {cutPresets.map(([value, label]) => (
+            <button key={value} type="button" draggable aria-pressed={preset === value}
+              className={`cursor-grab rounded border px-2 py-1 text-[10px] ${preset === value ? 'border-accent-blue text-accent-blue' : 'border-border text-text-secondary'}`}
+              onClick={() => setPreset(value)}
+              onDragStart={event => {
+                setPreset(value)
+                event.dataTransfer.effectAllowed = 'copy'
+                event.dataTransfer.setData('application/x-maestro-transition', value)
+              }}>{label}</button>
+          ))}
+          <span className="text-[10px] text-text-muted">Drag to a cut, or select a preset and click a cut.</span>
+        </div>
+      )}
       <div
         ref={scrollRef}
+        data-testid="editor-timeline-scroll"
         className="min-h-0 flex-1 overflow-auto overscroll-contain"
         style={{ touchAction: 'pan-x pan-y' }}
+        onScroll={event => {
+          const element = event.currentTarget
+          setViewport({ left: element.scrollLeft, top: element.scrollTop, width: element.clientWidth, height: element.clientHeight })
+        }}
         onPointerDownCapture={beginTimelineTouch}
         onPointerMoveCapture={updateTimelineTouch}
         onPointerUpCapture={finishTimelineTouch}
@@ -593,7 +671,7 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
       >
         <div ref={timelineContentRef} className="relative" style={{ width: TRACK_HEADER_WIDTH + contentWidth, minHeight: 28 + project.tracks.length * trackHeight }}>
           <div className="sticky top-0 z-30 flex h-7 border-b border-border bg-bg-secondary/95 backdrop-blur">
-            <div className="sticky left-0 z-40 w-[132px] shrink-0 border-r border-border bg-bg-secondary px-2 py-1 text-[8px] uppercase tracking-wider text-text-muted">Timeline</div>
+            <div className="sticky left-0 z-40 w-[132px] shrink-0 border-r border-border bg-bg-secondary px-2 py-1 text-[10px] uppercase tracking-wider text-text-muted">Timeline</div>
             <div
               className="relative h-full"
               style={{ width: contentWidth }}
@@ -601,7 +679,7 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
             >
               {ticks.map(tick => (
                 <div key={tick} className="absolute bottom-0 top-0 border-l border-border/80" style={{ left: tick * pixelsPerSecond }}>
-                  <span className="absolute left-1 top-0.5 font-mono text-[7px] text-text-muted">{formatEditorTime(tick)}</span>
+                  <span className="absolute left-1 top-0.5 font-mono text-[10px] text-text-muted">{formatEditorTime(tick)}</span>
                 </div>
               ))}
               {(project.markers || []).map(marker => (
@@ -625,7 +703,7 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
             </div>
           </div>
 
-          {displayTracks.map(track => {
+          {displayTracks.map((track, trackIndex) => {
             const draggedItem = drag?.mode === 'move'
               ? project.tracks.flatMap(candidate => candidate.items).find(item => item.id === drag.itemId)
               : undefined
@@ -651,8 +729,8 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
                 className="sticky left-0 z-20 flex w-[132px] shrink-0 items-center gap-0.5 border-r border-border bg-bg-secondary px-2"
                 onPointerDown={() => selectItem(null, track.id)}
               >
-                <TrackIcon type={track.type} />
-                <span className="min-w-0 flex-1 truncate text-[8px] text-text-secondary" title={track.name}>{track.name}</span>
+                {track.type === 'text' ? <button type="button" disabled={track.locked} title="Add text to this Titles track" aria-label="Add text to this Titles track" className="rounded p-1 text-accent-warm disabled:opacity-30" onPointerDown={event => event.stopPropagation()} onClick={() => addTitle(undefined, track.id)}><Plus size={12} /></button> : <TrackIcon type={track.type} />}
+                <span className="min-w-0 flex-1 truncate text-[10px] text-text-secondary" title={track.name}>{track.name}</span>
                 <button type="button" onPointerDown={event => event.stopPropagation()} onClick={() => toggleTrackMute(track.id)} className={`rounded p-1 ${track.muted ? 'text-red-400' : 'text-text-muted hover:text-text-primary'}`} title={track.muted ? 'Unmute track' : 'Mute track'}>
                   {track.muted ? <VolumeX size={9} /> : <Volume2 size={9} />}
                 </button>
@@ -694,7 +772,38 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
                 onDrop={event => dropAsset(event, track.id)}
               >
                 {ticks.map(tick => <div key={tick} className="pointer-events-none absolute inset-y-0 border-l border-border/25" style={{ left: tick * pixelsPerSecond }} />)}
-                {items.map(item => {
+                {showTransitions && transitionCuts(track, project.canvas.fps).map(({ left, right }) => {
+                  const applied = cutPresets.find(([value]) => value !== 'none' && value === left.transition_out
+                    && value === right.transition_in && left.fade_out && right.fade_in)
+                  return (
+                    <button key={right.id} type="button" style={{ left: right.start * pixelsPerSecond }}
+                      className="absolute top-1/2 z-20 h-6 w-6 -translate-x-1/2 -translate-y-1/2 rounded border border-accent-blue bg-bg-secondary text-xs text-accent-blue hover:bg-bg-active focus:ring-2"
+                      title={`${applied?.[1] || 'Cut'} at ${formatEditorTime(right.start)} — apply selected transition`}
+                      onPointerDown={event => event.stopPropagation()}
+                      onClick={() => applyCut(track.id, right.id, preset)}
+                      onDragOver={event => {
+                        if (!event.dataTransfer.types.includes('application/x-maestro-transition')) return
+                        event.preventDefault()
+                        event.stopPropagation()
+                        event.dataTransfer.dropEffect = 'copy'
+                      }}
+                      onDrop={event => {
+                        const value = event.dataTransfer.getData('application/x-maestro-transition')
+                        const match = cutPresets.find(([id]) => id === value)
+                        if (!match) return
+                        event.preventDefault()
+                        event.stopPropagation()
+                        applyCut(track.id, right.id, match[0])
+                      }}>{applied ? '◆' : '+'}</button>
+                  )
+                })}
+                {items.filter(item => {
+                  if (drag && (drag.itemId === item.id || selectedItemIds.includes(item.id))) return true
+                  const trackTop = 28 + trackIndex * trackHeight
+                  return trackTop + trackHeight >= viewport.top - trackHeight
+                    && trackTop <= viewport.top + viewport.height + trackHeight
+                    && item.start + item.duration >= visibleStart && item.start <= visibleEnd
+                }).map(item => {
                   const preview = drag?.itemId === item.id ? drag : null
                   const participatesInLinkedPreview = Boolean(
                     drag
@@ -725,14 +834,20 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
                       key={item.id}
                       data-editor-item-id={item.id}
                       className={`group absolute touch-none cursor-grab overflow-hidden rounded-md border shadow-sm active:cursor-grabbing ${clipClasses(track.type)} ${isSelected ? 'ring-2 ring-accent-warm ring-offset-1 ring-offset-bg-primary' : ''} ${track.locked ? 'cursor-not-allowed opacity-60' : ''} ${item.disabled ? 'opacity-35 saturate-0' : ''}`}
-                      style={{ left: start * pixelsPerSecond, width, top: compact ? 8 : 6, height: compact ? 42 : 34 }}
+                      style={{ left: start * pixelsPerSecond, width, top: 6, height: trackHeight - 12 }}
                       onPointerDown={event => beginDrag(event, item, 'move')}
-                      title={`${item.name} · ${item.duration.toFixed(2)}s`}
+                      onContextMenu={event => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        if (!selectedItemIds.includes(item.id)) selectItem(item.id, track.id)
+                        setClipMenu({ left: Math.max(8, Math.min(window.innerWidth - 245, event.clientX)), top: Math.max(8, Math.min(window.innerHeight - 340, event.clientY)) })
+                      }}
+                      title={`${item.text || item.name} · ${item.duration.toFixed(2)}s`}
                     >
                       <EditorClipMedia asset={asset} item={item} trackType={track.type} width={width} workspace={project.workspace} />
                       <div className="relative z-10 flex h-full items-center gap-1 overflow-hidden bg-gradient-to-r from-black/35 via-transparent to-black/20 px-2">
-                        <TrackIcon type={track.type} />
-                        <span className="truncate text-[8px] font-medium">{item.text || item.name}</span>
+                        {track.type === 'text' ? <button type="button" disabled={track.locked} title="Add text to this Titles track" aria-label="Add text to this Titles track" className="rounded p-1 text-accent-warm disabled:opacity-30" onPointerDown={event => event.stopPropagation()} onClick={() => addTitle(undefined, track.id)}><Plus size={12} /></button> : <TrackIcon type={track.type} />}
+                        <span className="truncate text-[11px] font-medium">{item.text || item.name}</span>
                         {item.link_group_id && <Link2 size={9} className="ml-auto shrink-0 opacity-75" />}
                       </div>
                       {fadeIn > 0 && <span className="pointer-events-none absolute inset-y-0 left-0 z-10 bg-gradient-to-r from-black/70 to-transparent" style={{ width: Math.min(width, fadeIn * pixelsPerSecond) }} />}
@@ -823,6 +938,38 @@ export function EditorTimeline({ compact = false }: { compact?: boolean }) {
         </div>
       </div>
       {trackMenuPortal}
+      {clipMenu && selectedItemId && createPortal(
+        <div role="menu" aria-label="Clip actions" data-editor-clip-menu
+          className="fixed z-[230] w-60 space-y-0.5 rounded-xl border border-border bg-bg-secondary p-1.5 shadow-2xl"
+          onKeyDown={event => {
+            const buttons = [...event.currentTarget.querySelectorAll<HTMLButtonElement>('button')]
+            const index = buttons.indexOf(document.activeElement as HTMLButtonElement)
+            let target = -1
+            if (event.key === 'ArrowDown') target = (index + 1) % buttons.length
+            if (event.key === 'ArrowUp') target = (index + buttons.length - 1) % buttons.length
+            if (event.key === 'Home') target = 0
+            if (event.key === 'End') target = buttons.length - 1
+            if (target >= 0) { event.preventDefault(); buttons[target]?.focus() }
+            if (event.key === 'Escape') { event.preventDefault(); setClipMenu(null); document.querySelector<HTMLButtonElement>('[data-editor-clip-menu-trigger]')?.focus() }
+          }}
+          style={{ left: clipMenu.left, top: clipMenu.top }}>
+          {([
+            ['Split at playhead', () => splitSelected()],
+            ['Duplicate clip', () => duplicateSelected()],
+            ['Copy clip', () => copySelected()],
+            ['Close preceding gap', () => executeEditOperations([{ type: 'close-gap', itemId: selectedItemId }])],
+            ['Crossfade from previous · 0.5s', () => executeEditOperations([{ type: 'crossfade', itemId: selectedItemId, seconds: 0.5 }])],
+            ['Slip source earlier · 1 frame', () => executeEditOperations([{ type: 'slip', itemId: selectedItemId, seconds: -1 / project.canvas.fps }])],
+            ['Slip source later · 1 frame', () => executeEditOperations([{ type: 'slip', itemId: selectedItemId, seconds: 1 / project.canvas.fps }])],
+            ['Roll next cut earlier · 1 frame', () => executeEditOperations([{ type: 'roll', itemId: selectedItemId, seconds: -1 / project.canvas.fps }])],
+            ['Roll next cut later · 1 frame', () => executeEditOperations([{ type: 'roll', itemId: selectedItemId, seconds: 1 / project.canvas.fps }])],
+            ['Delete selected clips', () => deleteSelected()],
+          ] as Array<[string, () => unknown]>).map(([label, action]) => (
+            <button key={label} type="button" role="menuitem" onClick={() => { action(); setClipMenu(null) }}
+              className="block w-full rounded-lg px-3 py-2 text-left text-xs text-text-secondary hover:bg-bg-hover hover:text-text-primary">{label}</button>
+          ))}
+        </div>, document.body,
+      )}
     </section>
   )
 }

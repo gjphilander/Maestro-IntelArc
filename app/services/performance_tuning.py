@@ -11,12 +11,14 @@ import math
 import re
 import sqlite3
 import statistics
+import sys
 import threading
 import time
 from pathlib import Path
 from contextlib import contextmanager
 
 from services.h3_performance_policy import h3_performance_advice
+from services.perf_recommend import _parse_resolution
 
 # Revision 4 fingerprints the effective per-job H3 attention head split.
 REVISION = 4
@@ -35,12 +37,41 @@ def _digest(value):
 
 
 def _auto_preload_runtime_identity():
-    """Hash MMGP's adaptive VRAM planner, which is outside launch's runtime list."""
-    path = Path(__file__).resolve().parents[1] / "mmgp" / "auto_preload.py"
+    """Fingerprint the selected MMGP planner source without importing it.
+
+    Legacy keeps the previous raw-source hash, so its hardware-history key is
+    unchanged. Experimental/unknown imports also include package identity and
+    version to prevent sharing adaptive-preload evidence across runtimes.
+    """
+    app_dir = Path(__file__).resolve().parents[1]
+    package = sys.modules.get("mmgp")
+    if package is None:
+        # Keep the historical path and digest when called before MMGP startup.
+        path = app_dir / "mmgp" / "auto_preload.py"
+        try:
+            return hashlib.sha256(path.read_bytes()).hexdigest()
+        except OSError:
+            return "unavailable"
+
+    planner = sys.modules.get("mmgp.auto_preload")
+    origin = getattr(planner, "__file__", None) if planner is not None else None
+    package_origin = getattr(package, "__file__", None)
+    package_dir = Path(package_origin).resolve().parent if package_origin else None
+    path = Path(origin).resolve() if origin else (
+        package_dir / "auto_preload.py" if package_dir is not None else None
+    )
     try:
-        return hashlib.sha256(path.read_bytes()).hexdigest()
+        source_hash = hashlib.sha256(path.read_bytes()).hexdigest() if path is not None else "unavailable"
     except OSError:
-        return "unavailable"
+        source_hash = "unavailable"
+
+    from services.memory_runtime import active_runtime_selection
+    selection = active_runtime_selection(app_dir, getattr(sys.modules.get("wgp"), "memory_runtime_selection", None))
+    backend = selection.backend if selection is not None else "unknown"
+    if backend == "legacy":
+        return source_hash
+    version = str(getattr(package, "__version__", "unknown"))
+    return _digest({"backend": backend, "version": version, "source": source_hash})
 
 
 def auto_owns(config, key):
@@ -48,6 +79,22 @@ def auto_owns(config, key):
     defaults = services.get("auto_performance_defaults", {})
     return bool(services.get("auto_performance", True) and key in defaults
                 and config.get(key) == defaults[key])
+
+
+def _h3_image_reference_pressure(model_def, params, output_type):
+    if output_type != "image" or model_def.get("architecture") != "h3_image":
+        return False
+    references = params.get("image_refs")
+    count = len(references) if isinstance(references, (list, tuple)) else int(bool(references))
+    if count >= 8:
+        return True
+    if count < 2:
+        return False
+    # The denoiser attends over canvas and reference tokens together. Leave
+    # room for that workspace on large canvases as well as large ref sets.
+    canvas = _parse_resolution(params.get("resolution"))
+    return bool(canvas and canvas[0] > 0 and canvas[1] > 0
+                and canvas[0] * canvas[1] >= 8 * 1024 ** 2)
 
 
 def _blackwell_16gb_h3_video_class(hardware, model_def, params, output_type):
@@ -267,6 +314,20 @@ def build_performance_plan(hardware, config, model_def, params, adjustment=None,
     if (model_def.get("minimax_h3_full_checkpoint") and ram >= 96
             and _number(cli.get("perc_reserved_mem_max")) <= 0 and not config.get("perc_reserved_mem_max")):
         plan["reserved_ram_fraction"] = round(min(.65, max(.50, 60 / ram)), 3)
+    if (hardware.get("cuda_available") and vram > 0 and profile in (1, 3)
+            and _h3_image_reference_pressure(model_def, params, output_type)):
+        if applied:
+            reclaimable_ram = _number(available_ram_gb, ram) + _number(own_pinned_gb)
+            # Profiles 1 and 3 put the full denoiser on the GPU. Stream it
+            # for these jobs, using pinned host weights only when RAM permits.
+            plan["profile"] = 2 if vram >= 20 and ram >= 64 and reclaimable_ram >= 48 else 5
+            plan["warnings"].append(
+                f"H3 Image uses streaming Profile {plan['profile']} to leave VRAM for the canvas and references."
+            )
+            return plan
+        plan["warnings"].append(
+            "The selected H3 Image profile may run out of VRAM on this reference-heavy canvas."
+        )
     if not applied:
         if explicit_profile and override_head_split:
             plan["reasons"].append(
