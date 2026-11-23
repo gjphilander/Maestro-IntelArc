@@ -58,6 +58,7 @@ import requests
 from copy import deepcopy
 from functools import wraps
 from pathlib import Path, PureWindowsPath
+from typing import Annotated
 from urllib.parse import quote, urlsplit
 
 # --- Bootstrap: CWD must be app/ and sys.argv must be patched before importing wgp ---
@@ -403,7 +404,7 @@ if _auto_perf_needs_refresh(wgp.server_config):
 sys.argv = _original_argv
 
 # --- FastAPI setup ---
-from fastapi import FastAPI, UploadFile, File, HTTPException, Request
+from fastapi import FastAPI, UploadFile, File, HTTPException, Query, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import FileResponse, JSONResponse, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -32083,6 +32084,117 @@ def combine_gallery_videos(body: dict):
         raise HTTPException(400, str(exc)) from exc
     return {"name": name, "workspace": workspace}
 
+
+
+
+from services.video_captions import (
+    CAPTION_COLOR_PATTERN,
+    DEFAULT_CAPTION_FONT_COLOR,
+    DEFAULT_CAPTION_FONT_SIZE,
+    DEFAULT_CAPTION_OUTLINE_COLOR,
+    MAX_CAPTION_FONT_SIZE,
+    MIN_CAPTION_FONT_SIZE,
+)
+
+_video_caption_lock = threading.Lock()
+
+
+@api.get("/api/v1/outputs/captions/dubbing-languages")
+def get_caption_dubbing_languages() -> dict[str, list[str]]:
+    """Report the local voices that are available for optional dubbing."""
+    from services.caption_dubbing import dubbing_languages
+
+    return {"languages": sorted(dubbing_languages())}
+
+
+@api.post("/api/v1/outputs/captions")
+async def caption_uploaded_video(
+    request: Request,
+    filename: str,
+    workspace: str = "",
+    font_size: Annotated[int, Query(ge=MIN_CAPTION_FONT_SIZE, le=MAX_CAPTION_FONT_SIZE)] = DEFAULT_CAPTION_FONT_SIZE,
+    font_color: Annotated[str, Query(pattern=CAPTION_COLOR_PATTERN)] = DEFAULT_CAPTION_FONT_COLOR,
+    outline_color: Annotated[str, Query(pattern=CAPTION_COLOR_PATTERN)] = DEFAULT_CAPTION_OUTLINE_COLOR,
+    target_language: Annotated[str, Query(pattern=r"^(?:[a-z]{2,3})?$")] = "",
+    dub_audio: bool = False,
+) -> dict[str, str]:
+    """Accept one raw video upload and publish the captioned MP4 to the gallery."""
+    import logging
+    from tempfile import NamedTemporaryFile, TemporaryDirectory
+    from starlette.concurrency import run_in_threadpool
+    from services.video_captions import (
+        MAX_UPLOAD_BYTES,
+        VIDEO_EXTENSIONS,
+        CaptionExportError,
+        CaptionInputError,
+        export_captioned_video,
+    )
+    from shared.utils.video_decode import _resolve_media_binary
+
+    # A raw binary request cannot be sent by a cross-origin HTML form.
+    if request.headers.get("content-type") != "application/octet-stream":
+        raise HTTPException(415, "Upload a video as application/octet-stream.")
+    suffix = Path(filename).suffix.lower()
+    if suffix not in VIDEO_EXTENSIONS:
+        raise HTTPException(400, "Choose an MP4, MOV, M4V, MKV, AVI, or WebM video.")
+    length = request.headers.get("content-length")
+    if length and length.isdecimal() and int(length) > MAX_UPLOAD_BYTES:
+        raise HTTPException(413, "Choose a video smaller than 1 GB.")
+
+    workspace_name = (workspace or _get_active_workspace()).strip() or "default"
+    destination = Path(_gallery_directory(workspace_name, writable=True))
+    ffmpeg = Path(_compression_ffmpeg()).resolve()
+    adjacent_probe = ffmpeg.with_name("ffprobe.exe" if os.name == "nt" else "ffprobe")
+    ffprobe = str(adjacent_probe) if adjacent_probe.is_file() else _resolve_media_binary("ffprobe")
+    if not ffprobe:
+        raise HTTPException(503, "FFprobe could not be found.")
+
+    if not _video_caption_lock.acquire(blocking=False):
+        raise HTTPException(409, "A video is already being captioned. Try again when it finishes.")
+
+    name = f"captioned_{uuid.uuid4().hex[:16]}.mp4"
+    output = None
+    try:
+        with TemporaryDirectory(prefix="maestro-caption-") as temp:
+            source = Path(temp) / f"source{suffix}"
+            size = 0
+            with source.open("wb") as upload:
+                async for chunk in request.stream():
+                    size += len(chunk)
+                    if size > MAX_UPLOAD_BYTES:
+                        raise HTTPException(413, "Choose a video smaller than 1 GB.")
+                    upload.write(chunk)
+            if not size:
+                raise HTTPException(400, "The uploaded video is empty.")
+
+            with NamedTemporaryFile(prefix=".caption-", suffix=".tmp", dir=destination, delete=False) as staged:
+                output = Path(staged.name)
+            await run_in_threadpool(
+                export_captioned_video, source, output, ffmpeg=str(ffmpeg),
+                ffprobe=str(Path(ffprobe).resolve()), font_size=font_size,
+                font_color=font_color, outline_color=outline_color, target_language=target_language,
+                dub_audio=dub_audio,
+            )
+            os.replace(output, destination / name)
+    except CaptionInputError as error:
+        raise HTTPException(422, str(error)) from error
+    except CaptionExportError as error:
+        raise HTTPException(500, str(error)) from error
+    except subprocess.TimeoutExpired as error:
+        raise HTTPException(504, "The caption export timed out while processing the video.") from error
+    except OSError as error:
+        logging.getLogger(__name__).exception("Could not process captioned video")
+        raise HTTPException(500, "Maestro could not read or save the video.") from error
+    finally:
+        try:
+            if output is not None:
+                output.unlink(missing_ok=True)
+        except OSError:
+            logging.getLogger(__name__).exception("Could not remove caption export staging file")
+        finally:
+            _video_caption_lock.release()
+
+    return {"name": name, "workspace": workspace_name}
 
 
 @api.post("/api/v1/outputs/compress")

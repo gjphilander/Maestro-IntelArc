@@ -3,7 +3,7 @@ import { isDirectorRenderChild } from '../../lib/directorJobs'
 import { useRef, useCallback, useState, useEffect, useLayoutEffect, useMemo, type JSX } from 'react'
 import { Film, Play, Square, FolderOpen, Plus, Check, Loader2, X, BookMarked, Upload, Trash2, ChevronDown, ChevronUp, Maximize2, PanelRightOpen, PanelRightClose } from 'lucide-react'
 import { TabFilter } from './TabFilter'
-import { CombinePanel } from './CombinePanel'
+import { CaptionPanel } from './CaptionPanel'
 import { VideoCompressionPanel } from './VideoCompressionPanel'
 import { OllamaChatPanel } from './OllamaChatPanel'
 import { ThumbnailGallery } from './ThumbnailGallery'
@@ -1111,7 +1111,7 @@ export function MainContent() {
             <WorkspaceSelector />
           </>}
           {!isMobile && <GlobalQueuePopover />}
-          {(outputs.length > 0 || outputsLoading) && (
+          {mediaFilter !== 'captions' && (outputs.length > 0 || outputsLoading) && (
             <button
               type="button"
               aria-label={thumbnailsOpen ? 'Hide thumbnails' : 'Show thumbnails'}
@@ -1131,10 +1131,11 @@ export function MainContent() {
 
       {/* Content area: feed + thumbnails */}
       <div data-testid="gallery-content" className="flex-1 min-h-0 flex flex-row gap-0 overflow-hidden relative">
+        <CaptionPanel hidden={mediaFilter !== 'captions'} />
         {mediaFilter === 'chat' ? (
           <OllamaChatPanel />
-        ) : mediaFilter === 'combine' ? (
-          <CombinePanel />
+        ) : mediaFilter === 'captions' ? (
+          null
         ) : mediaFilter === 'compress' ? (
           <VideoCompressionPanel />
         ) : (

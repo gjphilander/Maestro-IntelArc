@@ -3339,11 +3339,11 @@ const _directorGalleryRequestTokens = new Map<string, number>()
 function galleryQuery(state: AppState) {
   return {
     workspace: state.browsingAllFolders ? '__all__' : state.browsingUploads ? '__uploads__' : state.activeWorkspace,
-    mediaFilter: (state.mediaFilter === 'compress' || state.mediaFilter === 'combine') ? 'videos' : state.mediaFilter === 'chat' ? 'all' : state.mediaFilter,
+    mediaFilter: state.mediaFilter === 'compress' ? 'videos' : state.mediaFilter === 'chat' || state.mediaFilter === 'captions' ? 'all' : state.mediaFilter,
     search: state.outputSearchQuery.trim() || undefined,
     // This option is only used by the gallery store. Editor asset discovery
     // calls fetchOutputs directly and keeps the backend's default behavior.
-    groupDirectorClips: state.mediaFilter !== 'combine',
+    groupDirectorClips: true,
   }
 }
 
@@ -3361,7 +3361,7 @@ function computeFilteredOutputs(outputs: OutputFile[], mediaFilter: MediaFilter)
   }
   _foCachedOutputs = outputs
   _foCachedFilter = mediaFilter
-  if (mediaFilter === 'chat') {
+  if (mediaFilter === 'chat' || mediaFilter === 'captions') {
     _foCachedResult = []
   } else if (mediaFilter === 'all') {
     _foCachedResult = outputs
@@ -3384,7 +3384,7 @@ function computeFilteredOutputs(outputs: OutputFile[], mediaFilter: MediaFilter)
     _foCachedResult = outputs
   } else if (mediaFilter === 'favorites') {
     _foCachedResult = outputs.filter(o => o.favorite)
-  } else if (mediaFilter === 'compress' || mediaFilter === 'combine') {
+  } else if (mediaFilter === 'compress') {
     _foCachedResult = outputs.filter(o => o.type === 'video')
   } else {
     _foCachedResult = outputs

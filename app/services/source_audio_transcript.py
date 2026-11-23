@@ -227,6 +227,14 @@ def _write_cache(path: Path, transcript: dict[str, Any]) -> None:
 
 
 def _default_transcribe(audio_path: Path) -> list[dict[str, Any]]:
+    _, segments = transcribe_source_audio(audio_path, word_timestamps=True)
+    return segments
+
+
+def transcribe_source_audio(
+    audio_path: Path, *, word_timestamps: bool = False,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Return the detected language and timed speech from the shared local Whisper model."""
     global _WHISPER_MODEL
     with _MODEL_LOCK:
         if _WHISPER_MODEL is None:
@@ -249,11 +257,11 @@ def _default_transcribe(audio_path: Path) -> list[dict[str, Any]]:
                 raise SourceAudioTranscriptError(f"Could not load the faster-whisper small CPU model: {error}") from error
 
     try:
-        raw_segments, _info = _WHISPER_MODEL.transcribe(
+        raw_segments, info = _WHISPER_MODEL.transcribe(
             str(audio_path),
             task="transcribe",
             beam_size=5,
-            word_timestamps=True,
+            word_timestamps=word_timestamps,
             language=None,
             vad_filter=True,
         )
@@ -274,7 +282,7 @@ def _default_transcribe(audio_path: Path) -> list[dict[str, Any]]:
             if words:
                 segment["words"] = words
             result.append(segment)
-        return result
+        return info.language, result
     except SourceAudioTranscriptError:
         raise
     except Exception as error:
@@ -489,6 +497,7 @@ def format_source_audio_transcript(
 __all__ = [
     "SourceAudioTranscriptError",
     "get_source_audio_transcript",
+    "transcribe_source_audio",
     "source_window_transcript",
     "format_source_audio_transcript",
 ]

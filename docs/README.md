@@ -14,6 +14,7 @@ Start with the [README](../README.md) for installation and the feature overview.
 
 ## Video and reference workflows
 
+- [Auto Captions](Auto-Captions.md) — local speech recognition, caption translation, styling, and MP4 export.
 - [FastH3](FastH3.md) — V2, OmniRef, supported formats and experimental limits.
 - [H3 LightX2V accelerators](H3-LightX2V-Accelerators.md) — workflow-matched four/eight-step recipes.
 - [H3 Fused LoRAs](H3-Fused-LoRAs.md) — adapter compatibility and sampling guidance.

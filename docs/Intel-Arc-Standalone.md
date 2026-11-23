@@ -8,7 +8,11 @@ The owner confirmed a successful video generation on Windows using the standalon
 
 ## Local tools
 
-Use Video Prompt Chat for Ollama conversations and dictation. **Use in Studio** transfers the reply into the Studio prompt. **Combine Clips** joins gallery videos in selection order. **Compress** produces a smaller H.264 copy. The Editor supports title styling and drag-and-drop transitions. See [Editor transitions](Editor-Transitions.md) and [Editor text overlays](Editor-Text-Overlays.md).
+Use Video Prompt Chat for Ollama conversations and dictation. **Use in Studio** transfers the reply into the Studio prompt. **Compress** produces a smaller H.264 copy. The Editor supports title styling and drag-and-drop transitions. See [Editor transitions](Editor-Transitions.md) and [Editor text overlays](Editor-Text-Overlays.md).
+
+### Auto Captions on Intel Arc
+
+After the normal Pinokio setup, open **Auto Captions** from either the standalone launcher or Pinokio. Caption processing runs on the CPU and uses the same controls in both launch modes. On first use, Maestro downloads the speech model and, if you request translation, the translation model. Once downloaded, both models can run offline. [Auto Captions guide](Auto-Captions.md)
 
 ## Moving a working installation
 

@@ -857,19 +857,43 @@ export async function toggleFavorite(name: string, workspace?: string): Promise<
   return res.json()
 }
 
-export async function combineOutputs(clips: {workspace: string; name: string}[], workspace: string): Promise<{name: string; workspace: string}> {
-  const res = await fetch(`${BASE}/api/v1/outputs/combine`, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ clips, workspace }),
-  })
-  if (!res.ok) {
-    const error = await res.json().catch(() => ({}))
-    throw new Error(error.detail || 'Could not combine clips.')
-  }
+export async function fetchCaptionDubbingLanguages(signal: AbortSignal): Promise<{ languages: string[] }> {
+  const res = await fetch(`${BASE}/api/v1/outputs/captions/dubbing-languages`, { signal })
+  if (!res.ok) throw new Error('Could not load the available dubbing voices.')
   return res.json()
 }
 
+export async function captionVideo(
+  file: File,
+  workspace: string,
+  options: {
+    fontSize: number
+    fontColor: string
+    outlineColor: string
+    targetLanguage: string
+    dubAudio: boolean
+  },
+): Promise<{ name: string; workspace: string }> {
+  const params = new URLSearchParams({
+    filename: file.name,
+    workspace,
+    font_size: String(options.fontSize),
+    font_color: options.fontColor,
+    outline_color: options.outlineColor,
+    target_language: options.targetLanguage,
+    dub_audio: String(options.dubAudio),
+  })
+  const res = await fetch(`${BASE}/api/v1/outputs/captions?${params}`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/octet-stream' },
+    body: file,
+  })
+  if (!res.ok) {
+    const error = await res.json().catch(() => null)
+    throw new Error(typeof error?.detail === 'string' ? error.detail : 'Could not export the captioned video.')
+  }
+  return res.json()
+}
 
 export async function compressOutput(name: string, workspace: string | undefined, quality: number, preset: string, replaceOriginal: boolean): Promise<{
   name: string

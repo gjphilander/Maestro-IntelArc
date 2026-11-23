@@ -23,6 +23,10 @@ Open the cloned app in Pinokio and run **Install**. After installation, double-c
 
 ![Maestro v3.2.5 Studio with image references and a generated video](docs/images/chat-ui-november-2026.png)
 
+## Auto Captions
+
+![Auto Captions panel showing style controls and a captioned video preview](docs/images/captions-ui-november-2026.png)
+
 [Features](#what-it-does) · [Install](#install) · [Updates](#updates) · [Guides](docs/README.md) · [Full update history](docs/UPDATE_HISTORY.md)
 
 ## What it does
@@ -35,7 +39,7 @@ Create with **Studio**, plan a production with **Director**, and finish it in th
 - **Studio — video, images and audio.** Generate from text or references; animate, extend, blend and edit video; create and edit images; or make music, speech, cloned voices and sound effects. Queue jobs, enhance prompts and adjust model-specific controls. Models include MiniMax H3, LTX, Flux, Qwen, MOSS and Fish Audio. [Studio guide](docs/Studio-controls.md).
 - **Editor — finish on a timeline.** Arrange video, audio and titles with trimming, transitions, speed, volume and canvas controls. Bring in a Director production or gallery clips, send a shot back through AI generation, and export the finished edit.
 - **Compress generated videos.** Make a smaller H.264 MP4 copy of a video in an output workspace. Choose quality and encoding speed, and optionally replace an MP4 original after compression succeeds.
-- **Combine clips.** Select at least two output videos in playback order and save a joined MP4 in the active workspace. FFmpeg normalizes frame size, frame rate and audio before joining them.
+- **Auto Captions.** Transcribe an uploaded video locally, translate captions into one of 100 target languages, and choose the font size, text color, and outline color before exporting an MP4. [Auto Captions guide](docs/Auto-Captions.md)
 
 ### Keep control of your creative workflow
 
@@ -478,17 +482,11 @@ Transitions preview in the Editor, survive save/reload, support Undo, and render
 
 The November 2026 expansion adds dip-to-white and four directional wipes to the original presets. After updating, rebuild the UI if updating manually, restart Maestro, and refresh the browser with **Ctrl+F5**. See [Editor transition instructions and change record](docs/Editor-Transitions.md).
 
-### Combine generated clips
+### Add automatic captions
 
-Open **Combine Clips** in the main workspace. Add at least two videos in the
-order they should play. Remove an item and add it again to change its position.
-Click **Combine clips** to save `combined_<id>.mp4` in the active output workspace.
+Open **Auto Captions** in the main workspace and upload a video. Keep **Original language** or select a target under **Caption language**, then choose the **Font size**, **Font color**, and **Border color**. Click **Export captioned video** to burn the captions into an MP4. Caption-only exports retain the source audio. Preview or download the result from the tab, or find it in the active output workspace. To hear the translation as well, check **Dub translated audio** for a language with a local voice. Maestro mixes the spoken translation with the separated music and sound effects.
 
-The first clip determines the output frame size. Each clip is re-encoded to
-30 fps H.264 video with aspect-preserving scaling and padding, plus 48 kHz stereo
-AAC audio. Clips without audio receive silence. Original clips are retained.
-This tool requires FFmpeg and FFprobe and processes clips on the CPU. Uploaded
-source videos are excluded from the selector.
+Supported files are MP4, MOV, M4V, MKV, AVI, and WebM, up to 1 GB and 30 minutes. The normal Maestro install handles the dependencies. The first caption export downloads the Whisper model if needed (about 484 MB). The first export that translates captions downloads the translation model if needed (about 500 MB). Once cached, both models run offline. [Auto Captions setup and troubleshooting](docs/Auto-Captions.md)
 
 ### Standalone Windows startup
 
