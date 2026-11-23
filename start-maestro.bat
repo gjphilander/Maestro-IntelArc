@@ -3,7 +3,7 @@ setlocal EnableExtensions DisableDelayedExpansion
 set "APP=%~dp0app"
 set "RUNTIME=%APP%\env-xpu"
 set "STAGE=%APP%\env-xpu.maestro-copy"
-set "SOURCE=%~dp0..\.Maestro.git\app\env-xpu"
+set "SOURCE=%~dp0\Maestro-IntelArc\app\env-xpu"
 if not exist "%APP%\launch.py" goto wrong_folder
 if exist "%RUNTIME%\Scripts\python.exe" goto launch
 if exist "%RUNTIME%\" goto partial
@@ -47,7 +47,7 @@ goto failed
 echo A local env-xpu folder exists without Scripts\python.exe. Inspect it before retrying.
 goto failed
 :missing
-echo The one-time setup requires the original .Maestro.git\app\env-xpu folder.
+echo The one-time setup requires the original Maestro-IntelArc\app\env-xpu folder.
 goto failed
 :copy_failed
 echo Runtime copy did not finish. Check free space and the copy output, then run this file again.
