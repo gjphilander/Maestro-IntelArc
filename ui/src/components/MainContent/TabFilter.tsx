@@ -13,6 +13,7 @@ const tabs: { value: MediaFilter; label: string; shortLabel: string; icon?: stri
   { value: 'favorites', label: 'Favorites', shortLabel: '', icon: 'heart' },
   { value: 'compress', label: 'Compress', shortLabel: 'Cmp' },
   { value: 'chat', label: 'Chat', shortLabel: 'Chat' },
+  { value: 'camera', label: 'Camera', shortLabel: 'Camera' },
   { value: 'captions', label: 'Auto Captions', shortLabel: 'Captions' },
 ]
 
@@ -99,6 +100,7 @@ export function TabFilter() {
                   : 'text-text-muted hover:text-text-secondary'
               }`}
               title={tab.label}
+              aria-pressed={mediaFilter === tab.value}
             >
               {tab.icon === 'heart' && <Heart size={11} fill={mediaFilter === 'favorites' ? 'currentColor' : 'none'} />}
               {tab.icon === 'film' && <Film size={11} />}
@@ -136,7 +138,7 @@ export function TabFilter() {
       </div>
 
       {/* Search */}
-      {mediaFilter === 'chat' || mediaFilter === 'captions' ? null : searchOpen ? (
+      {mediaFilter === 'chat' || mediaFilter === 'camera' || mediaFilter === 'captions' ? null : searchOpen ? (
         <div className="flex items-center gap-1 rounded-lg border border-border bg-bg-tertiary px-2 py-0.5 md:absolute md:right-0 md:top-full md:z-50 md:mt-2 md:w-56 md:shadow-xl xl:static xl:mt-0 xl:w-auto xl:shadow-none">
           <Search size={12} className="text-text-muted shrink-0" />
           <input

@@ -348,13 +348,17 @@ def build_performance_plan(hardware, config, model_def, params, adjustment=None,
     if external_vram_gb > 2:
         plan["warnings"].append("Other GPU activity is using VRAM before model loading; close other GPU applications if memory is tight.")
     allowed_profiles = [profile]
-    # XPU: Windows reports an installed 64-GB RAM system as about 63.8 GiB.
-    # Treat a high-VRAM Arc workstation as VRAM-first and use H3's existing
-    # workload-derived cap instead of the generic 3-GB small-host allowance.
+    # Guarded Fused video can use synchronous GPU preload without pinning
+    # host weights. Allow it on 32-GB hosts, whose usable RAM can be below 32.
+    guarded_fused_h3_video = (
+        output_type == "video"
+        and model_def.get("minimax_h3_fused_turbo")
+        and "h3_weight_budget_gb" in adjustment
+    )
     xpu_vram_first_h3 = (
         str(hardware.get("gpu_backend") or "").lower() == "xpu"
         and vram >= 24
-        and ram >= 60
+        and (ram >= 60 or (ram >= 30 and guarded_fused_h3_video))
     )
     blackwell_16gb_h3_video = is_h3 and _blackwell_16gb_h3_video_class(
         hardware, model_def, params, output_type

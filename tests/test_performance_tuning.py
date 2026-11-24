@@ -103,6 +103,34 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(clamped["transformer_budget_mb"], 0)
         self.assertTrue(clamped["warnings"])
 
+    def test_xpu_fused_h3_uses_guarded_preload_with_32_gb_ram(self):
+        hw, config = setup(ram=31.8, vram=31.2)
+        hw.update(gpu_backend="xpu", gpu_available=True, cuda_available=False)
+        apply_auto_performance(config, hw, force=True)
+        model = {**MODEL, "minimax_h3_fused_turbo": True}
+        adjustment = {"h3_weight_budget_gb": 18, "effective_coef": 18 / 31.2}
+
+        plan = build_performance_plan(
+            hw, config, model, PARAMS, adjustment,
+            profile=config["video_profile"], available_ram_gb=1,
+        )
+        self.assertEqual(plan["profile"], 5)
+        self.assertTrue(plan["synchronous_preload"])
+        self.assertEqual(plan["transformer_budget_mb"], 17664)
+
+        for candidate, guard, foreign_vram, budget, preload in (
+            (model, adjustment, 4, 14336, True),
+            (model, {**adjustment, "h3_activation_reserve_clamped": True}, 0, 0, False),
+            (MODEL, adjustment, 0, 3072, False),
+        ):
+            with self.subTest(candidate=candidate, guard=guard, foreign_vram=foreign_vram):
+                plan = build_performance_plan(
+                    hw, config, candidate, PARAMS, guard,
+                    profile=config["video_profile"], external_vram_gb=foreign_vram,
+                )
+                self.assertEqual(plan["transformer_budget_mb"], budget)
+                self.assertEqual(bool(plan.get("synchronous_preload")), preload)
+
     def test_blackwell_h3_autotune_preserves_guard_candidate_at_637_and_640_gb_ram(self):
         adjustment = guard_with_candidate(9.5)
         for ram in (63.7, 64.0):

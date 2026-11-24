@@ -67,7 +67,7 @@ On XPU startup, Maestro disables local-memory overcommit on Windows and limits P
 
 ### XPU memory and render performance
 
-On XPU systems with at least 24 GB VRAM and 60 GB reported system RAM, H3 Auto placement uses its workload-derived transformer residency budget. Eligible H3 Fused jobs preload transformer blocks synchronously into VRAM, reserving space for streamed blocks and attention workspaces. Native LTX-2.5 Distilled also supports this preload path within its existing profile budget. Automatic host pinning is disabled for these paths when reserved RAM is left at its XPU default. Explicit reserved-RAM choices take precedence.
+On XPU systems with at least 24 GB VRAM, H3 Auto placement uses its workload-derived transformer residency budget with at least 60 GB reported system RAM. H3 Fused video jobs with a workload-derived budget can also use this path with at least 30 GB reported system RAM. Eligible H3 Fused jobs preload transformer blocks synchronously into VRAM, reserving space for streamed blocks and attention workspaces. Native LTX-2.5 Distilled also supports this preload path within its existing profile budget. Automatic host pinning is disabled for these paths when reserved RAM is left at its XPU default. Explicit reserved-RAM choices take precedence.
 
 These paths batch direct weight copies within each block and synchronize at the block boundary. Set `MAESTRO_XPU_BATCH_WEIGHT_COPIES=0` before startup to restore individual blocking copies while retaining block residency. Render time depends on window length, reference count, resolution and decoding settings. Restart Maestro after updating runtime code.
 

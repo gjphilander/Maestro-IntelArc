@@ -6,6 +6,7 @@ import { TabFilter } from './TabFilter'
 import { CaptionPanel } from './CaptionPanel'
 import { VideoCompressionPanel } from './VideoCompressionPanel'
 import { OllamaChatPanel } from './OllamaChatPanel'
+import { CameraPromptPanel } from './CameraPromptPanel'
 import { ThumbnailGallery } from './ThumbnailGallery'
 import { MediaFeedItem } from './MediaFeedItem'
 import { GalleryViewer, type GalleryImageChoice } from './GalleryViewer'
@@ -1091,7 +1092,7 @@ export function MainContent() {
       <div className="px-2 md:px-6 py-2 md:py-3 border-b border-border flex items-center justify-between gap-2">
         <TabFilter />
         <div className="flex items-center gap-2 shrink-0">
-          {mediaFilter !== 'chat' && <>
+          {mediaFilter !== 'chat' && mediaFilter !== 'camera' && <>
             <div className="hidden text-xs text-text-muted xl:block">
               {outputsTotal > rootOutputsLoaded
                 ? `${rootOutputsLoaded} / ${outputsTotal} outputs`
@@ -1111,7 +1112,7 @@ export function MainContent() {
             <WorkspaceSelector />
           </>}
           {!isMobile && <GlobalQueuePopover />}
-          {mediaFilter !== 'captions' && (outputs.length > 0 || outputsLoading) && (
+          {mediaFilter !== 'captions' && mediaFilter !== 'camera' && (outputs.length > 0 || outputsLoading) && (
             <button
               type="button"
               aria-label={thumbnailsOpen ? 'Hide thumbnails' : 'Show thumbnails'}
@@ -1134,6 +1135,8 @@ export function MainContent() {
         <CaptionPanel hidden={mediaFilter !== 'captions'} />
         {mediaFilter === 'chat' ? (
           <OllamaChatPanel />
+        ) : mediaFilter === 'camera' ? (
+          <CameraPromptPanel />
         ) : mediaFilter === 'captions' ? (
           null
         ) : mediaFilter === 'compress' ? (
