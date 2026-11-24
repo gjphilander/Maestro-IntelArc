@@ -115,6 +115,15 @@ module.exports = {
     const solCapable = isSolCapable(kernel)
     const cuda13DriverUpdateRequired = solCapable && needsCuda13DriverUpdate(kernel)
     const samReady = info.exists("app/services/sam/env/.maestro-sam-ready")
+    const omniVoiceReady = info.exists("app/env-omnivoice/maestro-voices-v1.json")
+    const omniVoiceRunning = info.running("omnivoice_install.js")
+    const omniVoiceMenu = {
+      icon: "fa-solid fa-microphone",
+      text: omniVoiceRunning
+        ? "Installing OmniVoice"
+        : omniVoiceReady ? "Repair OmniVoice Dubbing" : "Install OmniVoice Dubbing",
+      href: "omnivoice_install.js",
+    }
     const agentAccessReady = info.exists("app/env-agent/pyvenv.cfg")
     // Do not gate this menu on kernel.gpu. Pinokio can render an app menu
     // before its hardware inventory has populated that property, which would
@@ -215,7 +224,7 @@ module.exports = {
             icon: 'fa-solid fa-terminal',
             text: "Terminal",
             href: "start.js",
-          }, ...testBenchMenu(endpoint, info), ...agentAccessMenu(info, agentAccessReady, running.agent_access)]
+          }, omniVoiceMenu, ...testBenchMenu(endpoint, info), ...agentAccessMenu(info, agentAccessReady, running.agent_access)]
         } else {
           return [{
             icon: 'fa-solid fa-terminal',
@@ -313,7 +322,7 @@ module.exports = {
           icon: "fa-solid fa-plug",
           text: "Install",
           href: "install.js",
-        }, {
+        }, omniVoiceMenu, {
           icon: "fa-solid fa-key",
           text: "<div><strong>Connect Hugging Face (Optional)</strong><div>For custom gated models or higher download limits. Not required for Maestro.</div></div>",
           href: "huggingface_login.js",

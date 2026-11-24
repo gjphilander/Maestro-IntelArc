@@ -32087,6 +32087,7 @@ def combine_gallery_videos(body: dict):
 
 
 
+from services.caption_dubbing import DubbingEngine
 from services.video_captions import (
     CAPTION_COLOR_PATTERN,
     DEFAULT_CAPTION_FONT_COLOR,
@@ -32102,9 +32103,9 @@ _video_caption_lock = threading.Lock()
 @api.get("/api/v1/outputs/captions/dubbing-languages")
 def get_caption_dubbing_languages() -> dict[str, list[str]]:
     """Report the local voices that are available for optional dubbing."""
-    from services.caption_dubbing import dubbing_languages
+    from services.caption_dubbing import dubbing_languages, omnivoice_languages
 
-    return {"languages": sorted(dubbing_languages())}
+    return {"languages": sorted(dubbing_languages()), "omnivoice_languages": sorted(omnivoice_languages())}
 
 
 @api.post("/api/v1/outputs/captions")
@@ -32117,6 +32118,7 @@ async def caption_uploaded_video(
     outline_color: Annotated[str, Query(pattern=CAPTION_COLOR_PATTERN)] = DEFAULT_CAPTION_OUTLINE_COLOR,
     target_language: Annotated[str, Query(pattern=r"^(?:[a-z]{2,3})?$")] = "",
     dub_audio: bool = False,
+    dubbing_engine: DubbingEngine = "espeak",
 ) -> dict[str, str]:
     """Accept one raw video upload and publish the captioned MP4 to the gallery."""
     import logging
@@ -32173,7 +32175,7 @@ async def caption_uploaded_video(
                 export_captioned_video, source, output, ffmpeg=str(ffmpeg),
                 ffprobe=str(Path(ffprobe).resolve()), font_size=font_size,
                 font_color=font_color, outline_color=outline_color, target_language=target_language,
-                dub_audio=dub_audio,
+                dub_audio=dub_audio, dubbing_engine=dubbing_engine,
             )
             os.replace(output, destination / name)
     except CaptionInputError as error:

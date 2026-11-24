@@ -16,6 +16,10 @@ The export is a separate H.264 MP4 with AAC audio. Caption-only exports use the 
 
 ## Dub translated audio
 
+To use the neural voice, choose **Install OmniVoice Dubbing** in Maestro's Pinokio menu. The installer sets up a separate Python environment. In **Auto Captions**, choose a translation language, check **Dub translated audio**, and select **OmniVoice (neural)**. Maestro selects it by default when it supports the chosen language. You can also choose **eSpeak NG (basic)** for a language with an eSpeak voice.
+
+OmniVoice generates a voice locally and uses it throughout the clip. It supports Afrikaans, isiXhosa, and isiZulu among other caption translation targets. The first neural dub downloads about 3.3 GB of model files. On a supported Intel Arc system it uses PyTorch XPU. On other systems the optional installer uses CPU PyTorch. [OmniVoice model files](https://huggingface.co/k2-fsa/OmniVoice/tree/main)
+
 When you check **Dub translated audio**, Maestro speaks the translated captions with a local synthetic voice and aligns it to the caption timing. It estimates the dialogue in the first audio track and removes it around the speech cues, then mixes in the dub. Music and sound effects between dialogue cues stay intact. In a mixed soundtrack, some original voices may remain, and sounds that overlap speech can change. Dubbing is available for languages with an installed voice, such as Afrikaans and French. Other targets remain available for caption-only exports.
 
 ## Install and first use
@@ -27,6 +31,7 @@ Use the [normal Maestro installation](../README.md#install). Pinokio installs th
 | Exporting any captions | faster-whisper Small | 484 MB |
 | Translating captions into a different language | M2M100 INT8 | 500 MB |
 | Dubbing translated speech | Hybrid Demucs soundtrack separation | 335 MB |
+| Using the OmniVoice neural dub | OmniVoice speech synthesis | 3.3 GB |
 
 Maestro downloads the models automatically if they are missing. Internet access is needed for those downloads. Once the models are cached, speech recognition, translation, and dubbing run offline on the Maestro computer. The video and caption text stay on that computer during processing.
 

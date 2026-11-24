@@ -9,12 +9,19 @@ import ctypes
 from functools import lru_cache
 import json
 import math
+import os
 import re
 import subprocess
 import sys
 from pathlib import Path
+from typing import Literal
 
 SAMPLE_RATE = 44100
+DubbingEngine = Literal["espeak", "omnivoice"]
+_APP_DIR = Path(__file__).resolve().parents[1]
+_OMNIVOICE_ENV = _APP_DIR / "env-omnivoice"
+_OMNIVOICE_MANIFEST = "maestro-voices-v1.json"
+_OMNIVOICE_ALIASES = {"ns": "nso"}
 _VOICE_ALIASES = {"no": "nb", "ns": "nso", "tl": "fil", "zh": "cmn"}
 _SYNCHRONOUS = 2
 _DONT_EXIT_ON_INIT_ERROR = 0x8000
@@ -38,6 +45,38 @@ def _voice_names() -> dict[str, str]:
 
 def dubbing_languages() -> frozenset[str]:
     return frozenset(_voice_names())
+
+
+def omnivoice_python() -> Path:
+    return _OMNIVOICE_ENV / ("Scripts/python.exe" if os.name == "nt" else "bin/python")
+
+
+def omnivoice_languages() -> frozenset[str]:
+    if not omnivoice_python().is_file():
+        return frozenset()
+    try:
+        codes = json.loads((_OMNIVOICE_ENV / _OMNIVOICE_MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return frozenset()
+    if not isinstance(codes, list):
+        return frozenset()
+    return frozenset(code for code in codes if isinstance(code, str) and re.fullmatch(r"[a-z]{2,3}", code))
+
+
+def _check_omnivoice(device: str) -> None:
+    import torch
+    from omnivoice import OmniVoice  # noqa: F401
+    from omnivoice.utils.lang_map import LANG_IDS
+    from torchaudio.pipelines import HDEMUCS_HIGH_MUSDB_PLUS  # noqa: F401
+
+    if device == "xpu" and not torch.xpu.is_available():
+        raise RuntimeError("PyTorch cannot access the Intel Arc GPU for OmniVoice.")
+    languages = set(LANG_IDS)
+    languages.update(alias for alias, code in _OMNIVOICE_ALIASES.items() if code in LANG_IDS)
+    manifest = Path(sys.prefix) / _OMNIVOICE_MANIFEST
+    temporary = manifest.with_suffix(".tmp")
+    temporary.write_text(json.dumps(sorted(languages)), encoding="utf-8")
+    temporary.replace(manifest)
 
 
 class _Voice:
@@ -115,6 +154,12 @@ def _speech_clip(voice: _Voice, text: str, frames: int, ffmpeg: str):
         divisor = math.gcd(SAMPLE_RATE, voice.rate)
         waveform = np.frombuffer(pcm, dtype="<i2").astype(np.float32) / 32768
         clip = resample_poly(waveform, SAMPLE_RATE // divisor, voice.rate // divisor)
+    return _fit_clip(clip, frames)
+
+
+def _fit_clip(clip, frames: int):
+    import numpy as np
+
     if not clip.size:
         raise RuntimeError("A translated voice clip could not fit its caption timing.")
     clip = clip[:frames]
@@ -127,11 +172,65 @@ def _speech_clip(voice: _Voice, text: str, frames: int, ffmpeg: str):
     return clip
 
 
-def _write_speech(path: Path, language: str, segments: list[dict], frames: int, ffmpeg: str) -> None:
+class _NeuralVoice:
+    def __init__(self, language: str):
+        # OmniVoice resolves both checkpoints through the Hub before it loads weights.
+        os.environ["HF_HUB_CACHE"] = str(_APP_DIR / "ckpts" / "omnivoice")
+        import torch
+        from omnivoice import OmniVoice
+
+        torch.set_num_threads(4)
+        device = "xpu" if torch.xpu.is_available() else "cpu"
+        print(f"OmniVoice dubbing device: {device}", flush=True)
+        self.model = OmniVoice.from_pretrained(
+            "k2-fsa/OmniVoice",
+            device_map=device,
+            dtype=torch.float16 if device == "xpu" else torch.float32,
+        )
+        self.language = _OMNIVOICE_ALIASES.get(language, language)
+        self.prompt = None
+
+    def clip(self, text: str, frames: int):
+        import numpy as np
+        import torch
+        from scipy.signal import resample_poly
+
+        text = text.translate(str.maketrans("[]<>", "［］＜＞"))
+        rate = self.model.sampling_rate
+        if self.prompt is None:
+            # Generate one voice, then use it as the speaker reference for every cue.
+            reference = self.model.generate(text=text, language=self.language)[0]
+            self.prompt = self.model.create_voice_clone_prompt(
+                ref_audio=(torch.as_tensor(reference).reshape(1, -1), rate),
+                ref_text=text,
+            )
+        waveform = self.model.generate(
+            text=text,
+            language=self.language,
+            duration=frames / SAMPLE_RATE,
+            voice_clone_prompt=self.prompt,
+            pad_duration=0,
+        )[0]
+        divisor = math.gcd(SAMPLE_RATE, rate)
+        clip = resample_poly(np.asarray(waveform, dtype=np.float32), SAMPLE_RATE // divisor, rate // divisor)
+        return _fit_clip(clip, frames)
+
+
+def _write_speech(
+    path: Path, language: str, segments: list[dict], frames: int, ffmpeg: str,
+    engine: DubbingEngine = "espeak",
+) -> None:
     import numpy as np
     import soundfile as sf
 
-    voice = _Voice(language)
+    if engine == "omnivoice":
+        synthesize = _NeuralVoice(language).clip
+    else:
+        voice = _Voice(language)
+
+        def synthesize(text: str, available_frames: int):
+            return _speech_clip(voice, text, available_frames, ffmpeg)
+
     silence = np.zeros(SAMPLE_RATE, dtype=np.float32)
 
     with sf.SoundFile(path, "w", SAMPLE_RATE, 1, subtype="FLOAT") as output:
@@ -147,7 +246,7 @@ def _write_speech(path: Path, language: str, segments: list[dict], frames: int, 
             if end <= start:
                 continue
             pad_to(start)
-            output.write(_speech_clip(voice, " ".join(segment["text"].split()), end - start, ffmpeg))
+            output.write(synthesize(" ".join(segment["text"].split()), end - start))
         pad_to(frames)
 
 
@@ -219,6 +318,10 @@ def _write_background(source: Path, path: Path, segments: list[dict]) -> None:
 
 
 def _main() -> None:
+    if len(sys.argv) == 3 and sys.argv[1] == "--check-omnivoice":
+        _check_omnivoice(sys.argv[2])
+        return
+
     import soundfile as sf
 
     directory = Path(sys.argv[1])
@@ -227,7 +330,10 @@ def _main() -> None:
     segments = request["segments"]
     language = request["language"]
     source = directory / "dub-source.wav"
-    _write_speech(directory / "dub-voice.wav", language, segments, sf.info(source).frames, ffmpeg)
+    _write_speech(
+        directory / "dub-voice.wav", language, segments, sf.info(source).frames, ffmpeg,
+        request.get("engine", "espeak"),
+    )
     _write_background(source, directory / "dub-background.wav", segments)
 
 

@@ -9,7 +9,9 @@ import subprocess
 import sys
 from pathlib import Path
 
-from services.caption_dubbing import SAMPLE_RATE, dubbing_languages
+from services.caption_dubbing import (
+    SAMPLE_RATE, DubbingEngine, dubbing_languages, omnivoice_languages, omnivoice_python,
+)
 from services.caption_translation import (
     CaptionTranslationError,
     supported_translation_language,
@@ -88,6 +90,7 @@ def _ass_color(color: str) -> str:
 
 def _prepare_dub(
     directory: Path, ffmpeg_input: list[str], duration: float, segments: list[dict], language: str,
+    engine: DubbingEngine,
 ) -> None:
     extracted = _run(
         [
@@ -102,10 +105,11 @@ def _prepare_dub(
         _LOG.warning("Dubbing audio extraction failed: %s", extracted.stderr.strip())
         raise CaptionInputError("FFmpeg could not read the soundtrack for dubbing.")
 
-    request = {"segments": segments, "language": language}
+    request = {"segments": segments, "language": language, "engine": engine}
     (directory / "dub-request.json").write_text(json.dumps(request, ensure_ascii=False), encoding="utf-8")
+    python = str(omnivoice_python()) if engine == "omnivoice" else sys.executable
     result = _run(
-        [sys.executable, "-m", "services.caption_dubbing", str(directory), ffmpeg_input[0]],
+        [python, "-m", "services.caption_dubbing", str(directory), ffmpeg_input[0]],
         Path(__file__).resolve().parents[1],
         5400,
     )
@@ -127,12 +131,20 @@ def export_captioned_video(
     outline_color: str = DEFAULT_CAPTION_OUTLINE_COLOR,
     target_language: str = "",
     dub_audio: bool = False,
+    dubbing_engine: DubbingEngine = "espeak",
 ) -> None:
     """Write an H.264/AAC MP4 to the caller's staging path."""
     if target_language and not supported_translation_language(target_language):
         raise CaptionInputError("Choose a supported caption language.")
-    if dub_audio and target_language not in dubbing_languages():
-        raise CaptionInputError("Choose a translation language with an available dubbing voice.")
+    if dub_audio:
+        if dubbing_engine == "omnivoice":
+            neural_languages = omnivoice_languages()
+            if not neural_languages:
+                raise CaptionInputError("Install OmniVoice Dubbing from the Maestro menu in Pinokio.")
+            if target_language not in neural_languages:
+                raise CaptionInputError("Choose a translation language supported by OmniVoice.")
+        elif target_language not in dubbing_languages():
+            raise CaptionInputError("Choose a translation language with an available dubbing voice.")
 
     directory = source.parent
     probe = _run(
@@ -212,7 +224,9 @@ def export_captioned_video(
     audio_inputs: list[str] = []
     audio_map = ["-map", "0:a:0"]
     if dub_audio:
-        _prepare_dub(directory, ffmpeg_input, duration, segments, target_language)
+        if not segments:
+            raise CaptionInputError("No speech was detected to dub.")
+        _prepare_dub(directory, ffmpeg_input, duration, segments, target_language, dubbing_engine)
         audio_inputs = ["-i", "dub-background.wav", "-i", "dub-voice.wav"]
         audio_map = [
             "-filter_complex",

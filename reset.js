@@ -15,6 +15,8 @@ module.exports = {
     // LTX-2.5 sidecars paired to optional CUDA 13 hardware runtimes
     { method: "fs.rm", params: { path: "app/env-ltx25-sol" } },
     { method: "fs.rm", params: { path: "app/env-ltx25-rtx50" } },
+    // Optional Auto Captions neural dubbing environment
+    { method: "fs.rm", params: { path: "app/env-omnivoice" } },
     // Pinned official LTX-2.5 source used to build the sidecar
     { method: "fs.rm", params: { path: "app/third_party/ltx25-runtime" } },
     // SAM 3.1 Python 3.12 conda env

@@ -127,8 +127,8 @@ class MemoryRuntimeBootstrapTests(unittest.TestCase):
     def _make_fake_app(root: Path) -> Path:
         app = root / "app"
         app.mkdir()
-        # Exercise the actual launch bootstrap block while stubbing only the
-        # side-effecting allocator/Torch/MMGP imports.
+        # Exercise the actual launch bootstrap block with test doubles for
+        # FFmpeg setup, the allocator, Torch, and MMGP.
         launch_source = (APP / "launch.py").read_text(encoding="utf-8")
         start = launch_source.index("# --- Bootstrap: CWD must be app/ and sys.argv must be patched before importing wgp ---")
         end = launch_source.index("# Preserve original argv, patch for wgp's argparse", start)
@@ -146,6 +146,11 @@ class MemoryRuntimeBootstrapTests(unittest.TestCase):
         shared = app / "shared"
         shared.mkdir()
         (shared / "__init__.py").write_text("", encoding="utf-8")
+        (shared / "ffmpeg_setup.py").write_text(
+            "def download_ffmpeg():\n"
+            "    pass\n",
+            encoding="utf-8",
+        )
         (app / "runtime_probe.py").write_text(
             "import json, os\n"
             "def record(event):\n"

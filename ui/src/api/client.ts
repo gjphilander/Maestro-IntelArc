@@ -857,7 +857,12 @@ export async function toggleFavorite(name: string, workspace?: string): Promise<
   return res.json()
 }
 
-export async function fetchCaptionDubbingLanguages(signal: AbortSignal): Promise<{ languages: string[] }> {
+export type CaptionDubbingEngine = 'espeak' | 'omnivoice'
+
+export async function fetchCaptionDubbingLanguages(signal: AbortSignal): Promise<{
+  languages: string[]
+  omnivoice_languages?: string[]
+}> {
   const res = await fetch(`${BASE}/api/v1/outputs/captions/dubbing-languages`, { signal })
   if (!res.ok) throw new Error('Could not load the available dubbing voices.')
   return res.json()
@@ -872,6 +877,7 @@ export async function captionVideo(
     outlineColor: string
     targetLanguage: string
     dubAudio: boolean
+    dubbingEngine: CaptionDubbingEngine
   },
 ): Promise<{ name: string; workspace: string }> {
   const params = new URLSearchParams({
@@ -882,6 +888,7 @@ export async function captionVideo(
     outline_color: options.outlineColor,
     target_language: options.targetLanguage,
     dub_audio: String(options.dubAudio),
+    dubbing_engine: options.dubbingEngine,
   })
   const res = await fetch(`${BASE}/api/v1/outputs/captions?${params}`, {
     method: 'POST',

@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import { Captions, Download, LoaderCircle } from 'lucide-react'
-import { captionVideo, fetchCaptionDubbingLanguages, getFileUrl } from '../../api/client'
+import { captionVideo, fetchCaptionDubbingLanguages, getFileUrl, type CaptionDubbingEngine } from '../../api/client'
 import { useStore } from '../../stores/useStore'
 
 const formats = '.mp4,.mov,.m4v,.mkv,.avi,.webm'
@@ -27,25 +27,30 @@ export function CaptionPanel({ hidden }: { hidden: boolean }) {
   const [outlineColor, setOutlineColor] = useState('#000000')
   const [targetLanguage, setTargetLanguage] = useState('')
   const [dubAudio, setDubAudio] = useState(false)
-  const [dubbingVoices, setDubbingVoices] = useState<string[] | null>(null)
+  const [dubbingVoices, setDubbingVoices] = useState<Awaited<ReturnType<typeof fetchCaptionDubbingLanguages>> | null>(null)
+  const [selectedEngine, setSelectedEngine] = useState<CaptionDubbingEngine | null>(null)
   const [dubbingError, setDubbingError] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [result, setResult] = useState<Awaited<ReturnType<typeof captionVideo>> | null>(null)
   const url = result ? getFileUrl(result.name, result.workspace) : ''
 
-  const canDub = dubbingVoices?.includes(targetLanguage) === true
+  const canUseNeural = dubbingVoices?.omnivoice_languages?.includes(targetLanguage) === true
+  const canUseStandard = dubbingVoices?.languages.includes(targetLanguage) === true
+  const canDub = canUseNeural || canUseStandard
+  const defaultEngine = canUseNeural ? 'omnivoice' : 'espeak'
+  const dubbingEngine = canUseNeural && canUseStandard ? selectedEngine ?? defaultEngine : defaultEngine
 
   useEffect(() => {
-    if (hidden || !targetLanguage || dubbingVoices) return
+    if (hidden || !targetLanguage) return
     const controller = new AbortController()
     void fetchCaptionDubbingLanguages(controller.signal)
-      .then(({ languages }) => setDubbingVoices(languages))
+      .then(setDubbingVoices)
       .catch(() => {
         if (!controller.signal.aborted) setDubbingError(true)
       })
     return () => controller.abort()
-  }, [hidden, targetLanguage, dubbingVoices])
+  }, [hidden, targetLanguage])
 
   async function exportVideo(event: FormEvent<HTMLFormElement>) {
     event.preventDefault()
@@ -60,7 +65,7 @@ export function CaptionPanel({ hidden }: { hidden: boolean }) {
     setResult(null)
     try {
       setResult(await captionVideo(file, workspace, {
-        fontSize, fontColor, outlineColor, targetLanguage, dubAudio: canDub && dubAudio,
+        fontSize, fontColor, outlineColor, targetLanguage, dubAudio: canDub && dubAudio, dubbingEngine,
       }))
       void refreshOutputs()
     } catch (error) {
@@ -109,6 +114,7 @@ export function CaptionPanel({ hidden }: { hidden: boolean }) {
               onChange={event => {
                 setTargetLanguage(event.target.value)
                 setDubAudio(false)
+                setSelectedEngine(null)
                 setDubbingError(false)
               }}
               disabled={busy}
@@ -142,13 +148,33 @@ export function CaptionPanel({ hidden }: { hidden: boolean }) {
               </label>
               <p id="caption-dubbing-help" className="text-xs text-text-secondary">
                 {canDub
-                  ? 'Use a synthetic voice and keep the separated music and sound effects. First use may download about 335 MB.'
+                  ? 'Keep the separated music and sound effects. The first dub may download about 335 MB for soundtrack separation.'
                   : dubbingError
                     ? 'Dubbing voices are currently unavailable.'
                     : dubbingVoices
                       ? 'No local dubbing voice is available for this language.'
                       : 'Checking for a local dubbing voice…'}
               </p>
+              {dubbingVoices && !dubbingVoices.omnivoice_languages?.length && (
+                <p className="text-xs text-text-secondary">For a neural voice, choose Install OmniVoice Dubbing in Pinokio.</p>
+              )}
+              {dubAudio && canDub && (
+                <label className="block max-w-xs text-sm">
+                  Dubbing voice
+                  <select
+                    value={dubbingEngine}
+                    onChange={event => setSelectedEngine(event.target.value === 'omnivoice' ? 'omnivoice' : 'espeak')}
+                    disabled={busy}
+                    className="mt-1 block w-full rounded-lg border border-border bg-bg-tertiary p-2 text-text-primary"
+                  >
+                    {canUseNeural && <option value="omnivoice">OmniVoice (neural)</option>}
+                    {canUseStandard && <option value="espeak">eSpeak NG (basic)</option>}
+                  </select>
+                  {dubbingEngine === 'omnivoice' && (
+                    <span className="mt-1 block text-xs text-text-secondary">First use downloads the OmniVoice model, about 3.3 GB.</span>
+                  )}
+                </label>
+              )}
             </div>
           )}
 
