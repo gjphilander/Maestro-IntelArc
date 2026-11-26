@@ -1,35 +1,9 @@
-type CameraPromptGroup = {
-  title: string
-  moves: readonly (readonly [name: string, direction: string])[]
-}
+import type { PromptLibraryGroup } from './PromptLibraryPanel'
 
-export const cameraPromptField = 'detailed_description:'
-
-export function insertCameraPrompt(draft: string, movement: string): string {
-  const fields = [...draft.matchAll(/\b(subject_definitions|summary|retention_analysis|detailed_description|overall_soundscape|non_diegetic_music)[ \t]*:/gi)]
-  // A Studio script can contain several H3 windows. Target the final scene.
-  const names = fields.map(field => field[1].toLowerCase())
-  const start = Math.max(0, names.lastIndexOf('subject_definitions'))
-  const description = names.lastIndexOf('detailed_description')
-  const hasDescription = description >= start
-  const nextField = hasDescription ? fields[description + 1]
-    : fields.slice(start).find(field => /^(overall_soundscape|non_diegetic_music)$/i.test(field[1]))
-  const before = draft.slice(0, nextField?.index ?? draft.length)
-  const body = before.trimEnd()
-  const boundary = before.slice(body.length)
-  const after = draft.slice(before.length)
-  const labeledMovement = hasDescription ? movement : `${cameraPromptField} ${movement}`
-  // Reuse a multiline field boundary where present. Otherwise stay on the
-  // same line so Studio's manual window count is preserved.
-  const separator = nextField && !hasDescription && /[\r\n]/.test(boundary) ? boundary : body ? ' ' : ''
-  const suffix = nextField && !boundary ? ' ' : boundary
-  return `${body}${separator}${labeledMovement}${suffix}${after}`
-}
-
-export const cameraPromptGroups: readonly CameraPromptGroup[] = [
+export const cameraPromptGroups: readonly PromptLibraryGroup[] = [
   {
     title: 'Locked camera, pans, tilts, and rolls',
-    moves: [
+    entries: [
       ['Locked-off shot', 'The camera holds its exact starting position, angle, and framing for the entire clip as the scene moves naturally within the frame.'],
       ['Pan left', 'From a fixed position, the camera turns smoothly to look left, revealing what lies beyond the left edge of the opening frame, then settles.'],
       ['Pan right', 'From a fixed position, the camera turns smoothly to look right, revealing what lies beyond the right edge of the opening frame, then settles.'],
@@ -49,7 +23,7 @@ export const cameraPromptGroups: readonly CameraPromptGroup[] = [
   },
   {
     title: 'Dolly, truck, pedestal, and crane',
-    moves: [
+    entries: [
       ['Slow dolly in', 'The camera physically glides toward the subject at a fixed focal length, moving from a medium shot into a close-up as foreground objects shift against the background.'],
       ['Slow dolly out', 'The camera physically retreats from the subject at a fixed focal length, gradually revealing the wider setting around it.'],
       ['Fast dolly in', 'The camera rushes straight toward the subject, decelerates into a close-up, then holds the final framing steady.'],
@@ -66,7 +40,7 @@ export const cameraPromptGroups: readonly CameraPromptGroup[] = [
   },
   {
     title: 'Arcs and orbits',
-    moves: [
+    entries: [
       ['Leftward arc', 'The camera glides in a shallow curve from the subject’s front toward its left side, keeping the subject centered at roughly the same size.'],
       ['Rightward arc', 'The camera glides in a shallow curve from the subject’s front toward its right side, keeping the subject centered at roughly the same size.'],
       ['Quarter orbit to the left', 'The camera circles 90 degrees from a front view to a left profile at a constant distance and height, continuously aiming at the subject.'],
@@ -82,7 +56,7 @@ export const cameraPromptGroups: readonly CameraPromptGroup[] = [
   },
   {
     title: 'Tracking, handheld, and POV',
-    moves: [
+    entries: [
       ['Rear follow shot', 'The camera travels behind the walking subject at the same pace, keeping a steady gap and a clear view of the subject’s back.'],
       ['Front leading shot', 'The camera travels backward as the subject walks toward it, matching the subject’s pace to maintain a steady frontal medium shot.'],
       ['Left-side tracking', 'The camera moves parallel to the subject on its left side, matching its speed and maintaining a stable profile view.'],
@@ -101,7 +75,7 @@ export const cameraPromptGroups: readonly CameraPromptGroup[] = [
   },
   {
     title: 'Aerial and overhead moves',
-    moves: [
+    entries: [
       ['Drone flyover', 'The camera flies straight forward above the landscape at a steady altitude, looking slightly down as the terrain scrolls underneath.'],
       ['Drone rise reveal', 'The camera begins low behind a foreground ridge or rooftop, then climbs until the landscape beyond becomes visible.'],
       ['Drone descent', 'The camera lowers smoothly from an aerial wide shot toward the scene below, gradually revealing detail and easing to a stop above ground level.'],
@@ -115,7 +89,7 @@ export const cameraPromptGroups: readonly CameraPromptGroup[] = [
   },
   {
     title: 'Lens moves and focus changes',
-    moves: [
+    entries: [
       ['Optical zoom in', 'The camera stays in one place while the lens smoothly lengthens its focal length, tightening from a medium shot to a close-up.'],
       ['Optical zoom out', 'The camera stays in one place while the lens smoothly shortens its focal length, widening from a close-up to show the surroundings.'],
       ['Snap zoom in', 'Hold the camera position fixed, then rapidly zoom from a wider view into a detail and hold it sharply in frame.'],
@@ -128,7 +102,7 @@ export const cameraPromptGroups: readonly CameraPromptGroup[] = [
   },
   {
     title: 'Reveals and combined moves',
-    moves: [
+    entries: [
       ['Lateral reveal', 'Begin with a foreground pillar partly blocking the subject, then slide sideways until the subject is fully visible and framed clearly.'],
       ['Doorway push-through', 'Begin outside a doorway, glide forward through it at a steady pace, and settle on a clear view of the room beyond.'],
       ['Low ground-level push', 'Glide forward just above the ground at a fixed height, letting the foreground texture flow past as the subject fills more of the frame.'],

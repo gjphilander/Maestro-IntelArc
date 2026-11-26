@@ -25,10 +25,13 @@ export interface GenerateButtonSubmission {
 interface GenerateButtonProps {
   stretch?: boolean
   submission?: GenerateButtonSubmission
+  label?: string
+  prepareGeneration?: () => void
 }
 
 interface GenerateButtonPresentationProps {
   stretch: boolean
+  label: string
   blockedLabel?: string
   blockedTitle?: string
   pendingAction: 'generate' | 'queue' | null
@@ -44,6 +47,7 @@ interface GenerateButtonPresentationProps {
 /** Shared split-button markup for ordinary Studio generation and controlled flows. */
 function GenerateButtonPresentation({
   stretch,
+  label,
   blockedLabel,
   blockedTitle,
   pendingAction,
@@ -94,7 +98,7 @@ function GenerateButtonPresentation({
         {pendingAction === 'generate' || (busy && pendingAction === null)
           ? <Loader2 size={13} className="animate-spin" />
           : <Play size={13} fill="currentColor" />}
-        Generate
+        {label}
       </button>
       <button
         type="button"
@@ -112,7 +116,7 @@ function GenerateButtonPresentation({
   )
 }
 
-export function GenerateButton({ stretch = false, submission }: GenerateButtonProps) {
+export function GenerateButton({ stretch = false, submission, label = 'Generate', prepareGeneration }: GenerateButtonProps) {
   const startGeneration = useStore(s => s.startGeneration)
   const setSidebarOpen = useStore(s => s.setSidebarOpen)
   const [pendingAction, setPendingAction] = useState<'generate' | 'queue' | null>(null)
@@ -290,6 +294,7 @@ export function GenerateButton({ stretch = false, submission }: GenerateButtonPr
       if (submission) {
         await (action === 'queue' ? submission.onQueue() : submission.onGenerate())
       } else {
+        prepareGeneration?.()
         await startGeneration(action === 'queue' ? 'queue' : 'now')
       }
       if (!submission && action === 'generate' && useStore.getState().jobs.some(job =>
@@ -359,6 +364,7 @@ export function GenerateButton({ stretch = false, submission }: GenerateButtonPr
   return (
     <GenerateButtonPresentation
       stretch={stretch}
+      label={label}
       blockedLabel={blockedLabel}
       blockedTitle={blockedTitle}
       pendingAction={pendingAction}
