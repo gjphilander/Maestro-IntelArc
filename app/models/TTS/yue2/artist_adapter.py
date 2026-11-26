@@ -6,6 +6,8 @@ import torch
 import torch.nn.functional as F
 from safetensors.torch import load_file
 
+from shared.device import resolve_device
+
 
 def target_shapes(branch):
     attention = "self_attn" if branch == "ar" else "nar_self_attn"
@@ -158,6 +160,7 @@ def active_adapter_stack(pipeline, adapters):
         raise ValueError("Unsupported music adapter mode")
     companions = [item for item in adapters if item['mode'] == 'separate' and 'nar' in item['sources']]
     companion_total = sum(item['strength'] for item in companions)
+    device = resolve_device()
     handles, buffers = [], []
     projections = {}
     try:
@@ -177,7 +180,7 @@ def active_adapter_stack(pipeline, adapters):
                 tensors = read_upstream_adapter(sources[branch], branch, require_io=mode != "joint")
                 modules = dict(model.named_modules())
                 for name, _, _ in target_shapes(branch):
-                    a, b = (tensors[name + suffix].to(device="cuda", dtype=torch.bfloat16) for suffix in (".A", ".B"))
+                    a, b = (tensors[name + suffix].to(device=device, dtype=torch.bfloat16) for suffix in (".A", ".B"))
                     buffers.extend((a, b))
                     def add_adapter(module, inputs, output, a=a, b=b, scale=scale):
                         return output + F.linear(F.linear(inputs[0].to(a.dtype), a), b).to(output.dtype) * scale
@@ -192,7 +195,7 @@ def active_adapter_stack(pipeline, adapters):
         if projections:
             modules = dict(pipeline.transformer.named_modules())
             for name in ('vae2llm', 'llm2vae'):
-                weight, bias = (projections[f'{name}.{key}'].to(device='cuda', dtype=torch.bfloat16) for key in ('weight', 'bias'))
+                weight, bias = (projections[f'{name}.{key}'].to(device=device, dtype=torch.bfloat16) for key in ('weight', 'bias'))
                 buffers.extend((weight, bias))
                 def replace_projection(module, inputs, output, weight=weight, bias=bias):
                     return F.linear(inputs[0].to(weight.dtype), weight, bias).to(output.dtype)

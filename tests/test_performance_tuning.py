@@ -116,10 +116,11 @@ class PlannerTests(unittest.TestCase):
         )
         self.assertEqual(plan["profile"], 5)
         self.assertTrue(plan["synchronous_preload"])
-        self.assertEqual(plan["transformer_budget_mb"], 17664)
+        self.assertEqual(plan["transformer_budget_mb"], 10496)
 
         for candidate, guard, foreign_vram, budget, preload in (
-            (model, adjustment, 4, 14336, True),
+            (model, adjustment, 4, 7168, True),
+            (model, {"h3_weight_budget_gb": 8, "effective_coef": 8 / 31.2}, 0, 7936, True),
             (model, {**adjustment, "h3_activation_reserve_clamped": True}, 0, 0, False),
             (MODEL, adjustment, 0, 3072, False),
         ):
@@ -130,6 +131,12 @@ class PlannerTests(unittest.TestCase):
                 )
                 self.assertEqual(plan["transformer_budget_mb"], budget)
                 self.assertEqual(bool(plan.get("synchronous_preload")), preload)
+
+        plan = build_performance_plan(
+            {**hw, "ram_gb": 63.8}, config, model, PARAMS, adjustment,
+            profile=config["video_profile"],
+        )
+        self.assertEqual(plan["transformer_budget_mb"], 17664)
 
     def test_blackwell_h3_autotune_preserves_guard_candidate_at_637_and_640_gb_ram(self):
         adjustment = guard_with_candidate(9.5)

@@ -7,6 +7,8 @@ from multiprocessing.synchronize import Event
 from multiprocessing.shared_memory import SharedMemory
 import sys
 
+from shared.device import resolve_device
+
 from ..config import Config
 from .sequence import Sequence
 from ..layers.sampler import Sampler, _REPETITION_INCREMENT_LIMIT, apply_min_p_mask_, apply_sparse_repetition_penalty_
@@ -476,9 +478,8 @@ class ModelRunner:
     def _get_runtime_device(self) -> torch.device:
         if torch.cuda.is_available():
             return torch.device("cuda", torch.cuda.current_device())
-        if hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
-            return torch.device("mps")
-        return self._get_model_device()
+        device = resolve_device()
+        return self._get_model_device() if device.type == "cpu" else device
 
     def _pin_memory_enabled(self) -> bool:
         return self._get_runtime_device().type == "cuda"

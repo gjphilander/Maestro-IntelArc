@@ -139,12 +139,7 @@ class AdapterMathTests(unittest.TestCase):
             self.weights[label] = {'linear.A': torch.ones(1, 2), 'linear.B': torch.ones(2, 1) * scale,
                 **{f'{name}.{key}': torch.full((2, 2) if key == 'weight' else (2,), scale)
                    for name in ('vae2llm', 'llm2vae') for key in ('weight', 'bias')}}
-        original_to = torch.Tensor.to
-        def cpu_to(tensor, *args, **kwargs):
-            if kwargs.get('device') == 'cuda':
-                kwargs['device'] = 'cpu'
-            return original_to(tensor, *args, **kwargs)
-        self.stack.enter_context(patch.object(torch.Tensor, 'to', cpu_to))
+        self.stack.enter_context(patch.object(adapter, 'resolve_device', return_value=torch.device('cpu')))
         self.stack.enter_context(patch.object(adapter, 'target_shapes', return_value=[('linear', 2, 2)]))
         self.reader = self.stack.enter_context(patch.object(adapter, 'read_upstream_adapter', side_effect=lambda p, *a, **k: self.weights[p]))
 

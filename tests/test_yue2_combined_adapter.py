@@ -108,17 +108,12 @@ class CombinedAdapterTests(unittest.TestCase):
         pipeline = SimpleNamespace(text_encoder=ar, transformer=nar,
                                    engine=SimpleNamespace(release_runtime_allocations=lambda: None))
         weights = {'linear.A': torch.ones(1, 2), 'linear.B': torch.ones(2, 1)}
-        original_to = torch.Tensor.to
-        def cpu_to(tensor, *args, **kwargs):
-            if kwargs.get('device') == 'cuda':
-                kwargs['device'] = 'cpu'
-            return original_to(tensor, *args, **kwargs)
         x = torch.ones(1, 2, dtype=torch.bfloat16)
         baseline = [ar.linear(x).detach(), nar.linear(x).detach()]
         with ExitStack() as stack:
             stack.enter_context(patch('models.TTS.yue2.artist_adapter.read_upstream_adapter', return_value=weights))
             stack.enter_context(patch('models.TTS.yue2.artist_adapter.target_shapes', return_value=[('linear', 2, 2)]))
-            stack.enter_context(patch.object(torch.Tensor, 'to', cpu_to))
+            stack.enter_context(patch('models.TTS.yue2.artist_adapter.resolve_device', return_value=torch.device('cpu')))
             for strength in (0, .5, 1):
                 with active_adapters(pipeline, {'ar': 'ar', 'nar': 'nar'}, strength, mode='joint'):
                     for module, base in zip((ar.linear, nar.linear), baseline):

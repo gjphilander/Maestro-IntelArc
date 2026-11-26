@@ -133,6 +133,15 @@ class family_handler:
         return [{"repoId": REPO_ID, "revision": REVISION, "sourceFolderList": ["yue2", TEXT_ENCODER_FOLDER], "fileList": [ASSETS, ["qwen.tiktoken"]]}]
 
     @staticmethod
+    def resolve_lm_decoder_engine(requested_engine, engines_available):
+        from shared.device import resolve_device
+        from shared.llm_engines.nanovllm.vllm_support import resolve_lm_decoder_engine
+
+        if resolve_device().type == "xpu":
+            return "legacy"
+        return resolve_lm_decoder_engine(requested_engine, engines_available)
+
+    @staticmethod
     def load_model(model_filename, model_type, base_model_type, model_def, dtype=None, VAE_dtype=None, save_quantized=False, profile=0, lm_decoder_engine="legacy", text_encoder_filename=None, **kwargs):
         from .pipeline import YuE2Pipeline
         paths = {name: fl.locate_file(os.path.join("yue2", name)) for name in ASSETS}

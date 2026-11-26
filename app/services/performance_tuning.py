@@ -342,24 +342,26 @@ def build_performance_plan(hardware, config, model_def, params, adjustment=None,
     clamped = clamped or adjustment.get("h3_residency_policy") == "profile_default"
     cap_gb = min(_number(adjustment.get("h3_weight_budget_gb"), vram),
                  _number(adjustment.get("effective_coef"), .7) * vram) * .97
+    # A 32-GB Arc host exhausted device memory on the first dense QKV
+    # projection when we allowed 17.25 GiB of resident transformer weights.
+    # Bound both initial and history-selected placement before subtracting
+    # other GPU use, leaving the rest for activations and driver allocations.
+    xpu = str(hardware.get("gpu_backend") or "").lower() == "xpu"
+    xpu_small_host_fused_video = (
+        is_h3 and xpu and vram >= 24 and 30 <= ram < 60
+        and output_type == "video"
+        and model_def.get("minimax_h3_fused_turbo")
+        and "h3_weight_budget_gb" in adjustment
+    )
+    if xpu_small_host_fused_video and not clamped:
+        cap_gb = min(cap_gb, vram / 3)
     # A cold worker can see memory occupied by other applications. A warm
     # worker passes zero here because its own model residency is reusable.
     cap_gb = max(0, cap_gb - max(0, _number(external_vram_gb) - .75))
     if external_vram_gb > 2:
         plan["warnings"].append("Other GPU activity is using VRAM before model loading; close other GPU applications if memory is tight.")
     allowed_profiles = [profile]
-    # Guarded Fused video can use synchronous GPU preload without pinning
-    # host weights. Allow it on 32-GB hosts, whose usable RAM can be below 32.
-    guarded_fused_h3_video = (
-        output_type == "video"
-        and model_def.get("minimax_h3_fused_turbo")
-        and "h3_weight_budget_gb" in adjustment
-    )
-    xpu_vram_first_h3 = (
-        str(hardware.get("gpu_backend") or "").lower() == "xpu"
-        and vram >= 24
-        and (ram >= 60 or (ram >= 30 and guarded_fused_h3_video))
-    )
+    xpu_vram_first_h3 = xpu_small_host_fused_video or (xpu and vram >= 24 and ram >= 60)
     blackwell_16gb_h3_video = is_h3 and _blackwell_16gb_h3_video_class(
         hardware, model_def, params, output_type
     )

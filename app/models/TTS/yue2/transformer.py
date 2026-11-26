@@ -7,6 +7,7 @@ from torch import nn
 import torch.nn.functional as F
 
 from shared.attention import pay_attention
+from shared.device import resolve_device
 from models.TTS.yue2._engine.models.qwen3 import Qwen3ForCausalLM
 from models.TTS.yue2._engine.layers.attention import Attention as PagedAttention
 from models.TTS.yue2._engine.layers.layernorm import RMSNorm as EngineRMSNorm
@@ -95,8 +96,9 @@ class YuE2AR(Qwen3ForCausalLM):
     @torch.inference_mode()
     def condition(self, token_ids):
         """Cache each layer's AR keys/values for acoustic flow matching."""
-        positions = torch.arange(len(token_ids), device="cuda")
-        x = self.model.embed_tokens(torch.tensor(token_ids, device="cuda"))
+        device = resolve_device()
+        positions = torch.arange(len(token_ids), device=device)
+        x = self.model.embed_tokens(torch.tensor(token_ids, device=device))
         cache = []
         for layer in self.model.layers:
             h = layer.input_layernorm(x)
@@ -178,12 +180,13 @@ class YuE2Acoustic(nn.Module):
     @torch.inference_mode()
     def synthesize(self, noise, cache_list, ar_length, steps, report):
         cache = cache_list.pop()
-        state = noise.to(device="cuda", dtype=self.vae2llm.weight.dtype)
+        state = noise.to(device=cache[0][0].device, dtype=self.vae2llm.weight.dtype)
         length = len(state) + 2
         positions = torch.arange(ar_length, ar_length + length, device=state.device)[None]
         cos, sin = self.rotary(positions)
         pos = self.latent_pos_embed(torch.arange(length, device=state.device))[None]
-        raw_steps = torch.logit(torch.arange(2 * steps, 0, -1, dtype=torch.float64) / (2 * steps)).clamp(-20, 20).to(state.device)
+        schedule = torch.arange(2 * steps, 0, -1, dtype=torch.float64, device="cpu") / (2 * steps)
+        raw_steps = torch.logit(schedule).clamp(-20, 20).to(device=state.device, dtype=state.dtype)
         try:
             for step in range(steps):
                 # The integrator retains state, but transfers ownership of the midpoint.
